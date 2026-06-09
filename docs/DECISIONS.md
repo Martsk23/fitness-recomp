@@ -60,3 +60,17 @@ Heure réelle du repas (epoch ms), défaut = `createdAt`, éditable plus tard.
 ## D13 — Migration v1→v2 LIVE = WIPE + RESEED (pas de transform destructif)
 Au boot, si une base v1 (PK auto-incrément) est détectée : **backup durable automatique** (IndexedDB séparée `fitnessRecompBackups`) **avant** tout delete → `Dexie.delete` → `db.open()` recrée une base v2 propre → reseed.
 **Pourquoi** : (1) Dexie interdit le changement de PK en place (`UpgradeError: Not yet support for changing primary key`) → il faut recréer le store ; (2) mes données live = seed + tests, **jetables** ; le backup couvre le risque. Détection via **ouverture dynamique** Dexie (`probe.verno`), pas via un schéma v1 déclaré (ne lève pas de VersionError fiable). `transformV1toV2()` (remap FK parents→enfants) existe et est testé mais sert **uniquement à l'import de backups v1**, jamais en destructif sur la base live.
+
+## D14 — Moyenne glissante du poids = trailing sur N **points** (pas N jours calendaires)
+`movingAverage(values, window=7)` (`src/lib/weight.js`) moyenne les `window` dernières pesées **enregistrées**, indépendamment des dates.
+**Pourquoi** : simple, déterministe, testable (valeurs exactes en unit test), suffisant tant que la pesée est ~quotidienne. **Caveat assumé** : si des pesées sont sautées, ces N points couvrent plus de jours réels → tendance bruitée / en retard. Le lissage par **fenêtre calendaire** (7 jours réels, interpolation des trous) est **volontairement reporté** — à revisiter quand l'usage réel le justifiera, pas avant. Inscrit aussi en commentaire dans le code.
+
+## D15 — Politique de cibles recomp + garde-fous métaboliques (codés en dur)
+Le moteur `src/lib/metabolic.js` calcule les budgets de toute l'app depuis le profil. Valeurs actées :
+- **BMR** : Mifflin-St Jeor par défaut ; Katch-McArdle **uniquement si %MG saisi** (sinon indisponible, faute de LBM fiable).
+- **TDEE** : 5 multiplicateurs d'activité — 1,2 / 1,375 / 1,55 / 1,725 / 1,9.
+- **Recomp (objectif soigné)** : calories = **TDEE × 0,90** (léger déficit) ; **protéines 2,0 g/kg** (hautes, préservation/gain musculaire) ; **lipides 0,8 g/kg** ; **glucides = reste** des calories ; sucres simples **< 20 g/j** (déjà acté). Perte (×0,80 / 2,2 g/kg) et prise (×1,10 / 1,8 g/kg) prévues mais non soignées.
+- **Garde-fous (jamais franchis, quel que soit le profil)** : plancher calorique absolu **♂ 1500 / ♀ 1200 kcal** ; **déficit plafonné à −20 %** (jamais sous TDEE×0,80) ; **plancher protéines 1,6 g/kg** ; **plancher lipides 0,6 g/kg** ; **glucides jamais négatifs** (si prot+lip plancher dépassent le budget, on remonte les kcal).
+
+**Pourquoi** : la recomp exige protéines hautes + énergie quasi maintenance ; les garde-fous empêchent toute cible dangereuse (sous-alimentation, lipides trop bas pour la santé hormonale) sur un profil extrême. **Codés en dur volontairement** (pas seulement affichés) : le moteur ne PEUT pas émettre une cible sous ces planchers — testé par balayage (`tests/metabolic.test.mjs`).
+**Seam d'évolution** : tout passe par `computeTargets()` et le TDEE est stocké → un futur **calibrage empirique** (ajuster le TDEE selon l'évolution réelle du poids) s'insère à un seul endroit, sans refonte. Volontairement **différé**, porte laissée ouverte (cf. ROADMAP Tâche 2, point 11).

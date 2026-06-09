@@ -14,13 +14,16 @@ Coquille installable iOS, hors-ligne, qui ne perd pas ses données + sauvegarde/
 But : **utiliser l'app tous les jours.** Séquence révisée (cadrage 09/06) :
 
 - [x] **1.0 Migration schéma v2** — PK UUID, `updatedAt` partout, `loggedAt`, base compatible sync futur (voir DECISIONS.md D10-D13). ✅ commitée.
-- [ ] **1.1 Suivi du poids** ← _prochaine_ — saisie kg + date/heure → `weightLogs` ; courbe de tendance + moyenne glissante ; encart « bon moment pour se peser ». Dashboard Jour = poids du jour + tendance.
-- [ ] **2. Profil / onboarding + moteur de calcul métabolique** — dé-seed des cibles perso ; profil (sexe, âge, taille, activité, objectif, %MG?) ; IMC + caveat, BMR (Mifflin-St Jeor / Katch-McArdle), TDEE, cibles selon objectif avec garde-fous (planchers cal/prot/lip, déficit plafonné) ; calibrage TDEE empirique différé.
-- [ ] **3. Tickers interactifs** — cocher/incrémenter sur Jour → `tickerStates` keyé par date (reset auto minuit) ; progression visuelle (5/8).
+- [x] **1.1 Suivi du poids** ✅ commitée (f0556fb) — saisie kg + date/heure → `weightLogs` ; courbe de tendance + moyenne glissante (trailing 7 points, D14) ; encart « bon moment pour se peser ». Dashboard Jour = poids du jour + tendance. _(Régression écran Jour blanc corrigée au passage + smoke Playwright committé, 9a0c3be.)_
+- [x] **2. Profil / onboarding + moteur de calcul métabolique** ✅ commitée (c754429) — profil (sexe, âge, taille, activité, objectif, %MG?) ; BMR Mifflin-St Jeor / Katch-McArdle, TDEE (5 multiplicateurs), cibles recomp (TDEE×0,90, prot 2,0 g/kg) avec garde-fous codés en dur ; IMC + caveat ; dé-seed des cibles. Calibrage TDEE empirique différé (seam prêt). Voir D15.
+- [ ] **3. Tickers interactifs** ← _prochaine_ — cocher/incrémenter sur Jour → `tickerStates` keyé par date (absence de ligne = 0 → reset auto minuit, **pas de cron**) ; progression visuelle (5/8).
 - [ ] **4. Bilan énergétique** — consommé − dépensé, saisie manuelle rapide de la dépense du jour.
 - [ ] **Nutrition** (bibliothèque ingrédients bruts /100 g + composition par pesée + base boissons) — attaquée en session dédiée.
 
 _Parké : tracking micronutriments fin (fer/vitD…) → exige une base Ciqual/USDA, phase dédiée._
+
+## Dette technique
+- **Bundle > 500 kB** (warning au build) à cause de **Recharts**. Optimisation = **lazy-load des écrans à graphes** (Poids, puis Perf en Phase 2) via `React.lazy` / import dynamique, pour sortir Recharts du chunk initial. **À faire plus tard** — pas bloquant pour une app 100 % locale, juste tracé pour ne pas le perdre.
 
 ## Phase 2 — Intelligence
 5. Intelligence glucidique : IG bas (énergie stable) vs haut (autour des entraînements), sucres simples < 20 g/j, barres de composition, alertes contextuelles selon timing/activité.

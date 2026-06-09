@@ -23,21 +23,54 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 
 **Vérifs** : `node tests/migration.test.mjs` ✅ (fake-indexeddb, sans navigateur) — S1 fresh+idempotence, S2 legacy wipe+reseed+backup-avant-delete+idempotence boot 2×, S3 transformV1toV2 (remap FK + drop orphelines 1/1/1), S4 round-trip import v1→export v2→ré-import identique (updatedAt préservé). `npm run lint` ✅ · `npm run build` ✅.
 
-_MAJ 09/06/2026 — Phase 0 + Tâche 1.0 commitées. 1.1 et 3 non commencées._
+### Fix — écran Jour blanc (`get(1)` → `SETTINGS_KEY`) (session du 09/06/2026)
+- Régression du commit 1.0 : `Jour.jsx` lisait `db.settings.get(1)` alors que seed/migrate écrivent la clé `'singleton'` (D10-bis) → `settings` undefined → `return null` → **dashboard Jour blanc sur l'appareil** (dès le 1ᵉʳ seed, pas seulement post-migration). Fix = `get(SETTINGS_KEY)`.
+- **Non détecté** car `migration.test.mjs` tourne en node/fake-indexeddb et ne monte aucun composant React. → Ajout d'un **smoke Playwright committé** (`tests/e2e/smoke.spec.js` + `playwright.config.js`, script `npm run smoke`) qui monte le vrai React dans un vrai IndexedDB sur l'app buildée. Prérequis machine neuve documenté dans README (`npx playwright install chromium`).
+
+**Vérifs** : smoke **rouge sur le code buggé → vert après fix** (preuve qu'il attrape la classe de bug) · `npm run lint` ✅ · `npm test` ✅ · `npm run build` ✅. **Commit `9a0c3be`.**
+
+### Tâche 1.1 — Suivi du poids (session du 09/06/2026)
+- `src/lib/weight.js` (logique pure, testable node) : `movingAverage` trailing **7 derniers points** (caveat commenté : fenêtre = points, pas jours → sauts de pesée bruitent la tendance ; calendaire **reporté**), `trend` (down/up/flat + delta), `shouldWeighNow` (matin < 12h ET pas encore pesé).
+- `src/screens/Poids.jsx` (+ onglet câblé dans `App.jsx`) : saisie kg (virgule/point) + date/heure (défaut = maintenant) → `weightLogs` via `newRow()` (UUID + `updatedAt`), `date = todayKey(datetime)` ; courbe Recharts (points bruts + moyenne glissante) + historique.
+- `Jour.jsx` : encart pesée du jour + tendance, sinon CTA « bon moment pour te peser » le matin, sinon rappel discret.
+- **Schéma inchangé** : `weightLogs` déjà en v2 et déjà dans `TABLES` → export/import couvre la pesée sans modif.
+- Décision design actée : **D14** (moyenne glissante trailing N points, voir DECISIONS.md).
+
+**Vérifs** : `tests/weight.test.mjs` ✅ (moyenne glissante sur séries connues, valeurs exactes ; tendance ; heuristique — branché dans `npm test`) · smoke Playwright **persistance pesée** ✅ (saisie `77,7` → reload → relue + Jour reflète la pesée) · `npm run lint` ✅ · `npm run build` ✅ · `npm test` migration **reste vert**. **Commit `f0556fb`.**
+
+### Tâche 2 — Profil / moteur de calcul métabolique (session du 09/06/2026)
+- `src/lib/metabolic.js` (moteur pur, testable node) : BMR **Mifflin-St Jeor** (défaut) / **Katch-McArdle** (si %MG saisi), **5 multiplicateurs** TDEE (1.2→1.9), cibles par objectif (**recomp = TDEE×0,90, prot 2,0 g/kg, lip 0,8 g/kg, glucides = reste, sucres <20 acté**), IMC, **garde-fous codés en dur** (plancher kcal ♂1500/♀1200, déficit plafonné −20 %, prot ≥1,6 g/kg, lip ≥0,6 g/kg, glucides jamais négatifs).
+- `src/screens/Profil.jsx` : onboarding (profil vide au boot) + édition dans Données ; **poids = dernier `weightLogs` sinon saisie qui crée la 1ʳᵉ pesée** ; aperçu live des cibles ; écrit `settings` (profil + cibles + `targetsSource:'computed'`) via `touch()`.
+- `App.jsx` : gate onboarding au boot si profil incomplet (cadre `Shell` partagé). `Data.jsx` : section Profil & cibles + recalcul. `Jour.jsx` : fallback propre (pas de `NaN`) si cibles non calculées.
+- `seed.js` : **dé-seed** des cibles en dur (`profile:null`, `targetsSource:'fallback'`, sucres 20 conservés).
+- **Schéma inchangé** (`DEXIE_VERSION`/`SCHEMA_VERSION` = 2) : champs `settings` non indexés, additifs, rétro-compatibles ; export couvre via `TABLES` (lignes complètes). Calibrage TDEE empirique **différé** (seam centralisé dans `metabolic.js`).
+- Décisions actées : **D15** (politique cibles recomp + garde-fous). Voir DECISIONS.md.
+
+**Vérifs** : `tests/metabolic.test.mjs` ✅ (BMR valeurs connues, multiplicateurs, cibles recomp 2483/160/317/64, **garde-fous qui bloquent** + invariant balayage) · smoke Playwright ✅ (onboarding → cibles calculées 2483 → reload profil persisté) · `tests/migration.test.mjs` assertion reseed adaptée au dé-seed ✅ · `npm run lint`/`build`/`test` ✅. **Commit `c754429`.**
+
+_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) faits, validés, commités. **Tâche 3 tickers : NON commencée.**_
 
 ## En cours
-- (rien) — Tâche 1.0 **validée + commitée**.
+- (rien) — Tâche 2 close ; tickers à faire.
 
 ## PROCHAINE ACTION CONCRÈTE
-> **Étape 2 = Tâche 1.1 Suivi du poids** : saisie kg + date/heure → `weightLogs`, courbe de tendance + moyenne glissante, encart « bon moment pour se peser », dashboard Jour = poids du jour + tendance.
+> **Tâche 3 — Tickers interactifs** : cocher/incrémenter sur l'écran Jour → écrit `tickerStates` keyé par `(tickerId, date)` ; **absence de ligne = 0** (reset auto minuit, D3, **pas de cron**) ; progression visuelle (ex. 5/8). Écritures via `newRow()`/`touch()`. Smoke attendu : cocher → reload → état du jour conservé ; date différente → repart à 0.
 
 ## À faire — séquence (validation entre chaque)
-1. ~~**1.0 Migration v2**~~ ✅ faite · validée · commitée.
-2. **1.1 Suivi du poids** — _prochaine action_ ci-dessus. Pas commencée.
-3. **3 Tickers interactifs** : cocher/incrémenter sur Jour → `tickerStates` keyé par date (reset auto minuit) ; progression visuelle. Pas commencée.
+1. ~~**1.0 Migration v2**~~ ✅ commitée (939dd7f).
+2. ~~**fix écran Jour blanc**~~ ✅ + smoke Playwright committé (9a0c3be).
+3. ~~**1.1 Suivi du poids**~~ ✅ commitée (f0556fb).
+4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (c754429).
+5. **Tâche 3 Tickers interactifs** — _prochaine action_ ci-dessus. **Pas commencée.**
+6. **Tâche 4 Bilan énergétique** — consommé − dépensé, saisie manuelle rapide de la dépense. Pas commencée.
 
-## Prochaine session (demain) = NUTRITION
-Bibliothèque d'ingrédients bruts /100 g + composition de plat par pesée → `journalEntries` (snapshot) + base boissons. **Ne rien coder de nutrition ni de profil avant.**
+## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
+**Après** les tickers. À attaquer dans une **discussion neuve** :
+- Bibliothèque d'**ingrédients bruts /100 g** (enrichissable).
+- **Composition d'un plat par pesée** → `journalEntries` (macros figées en snapshot, D1).
+- **Migration des ~38 boissons** (kcal + portions standard) — base à recréer (ancien projet perdu).
+
+**Ne rien coder de nutrition ni de profil ici.**
 
 ## Notes / non testé
 - Installation réelle sur iPhone + offline standalone **non testés sur device** (vérifié headless). À valider sur l'iPhone cible (via URL Netlify fixe).
