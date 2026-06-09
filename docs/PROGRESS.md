@@ -27,7 +27,7 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - Régression du commit 1.0 : `Jour.jsx` lisait `db.settings.get(1)` alors que seed/migrate écrivent la clé `'singleton'` (D10-bis) → `settings` undefined → `return null` → **dashboard Jour blanc sur l'appareil** (dès le 1ᵉʳ seed, pas seulement post-migration). Fix = `get(SETTINGS_KEY)`.
 - **Non détecté** car `migration.test.mjs` tourne en node/fake-indexeddb et ne monte aucun composant React. → Ajout d'un **smoke Playwright committé** (`tests/e2e/smoke.spec.js` + `playwright.config.js`, script `npm run smoke`) qui monte le vrai React dans un vrai IndexedDB sur l'app buildée. Prérequis machine neuve documenté dans README (`npx playwright install chromium`).
 
-**Vérifs** : smoke **rouge sur le code buggé → vert après fix** (preuve qu'il attrape la classe de bug) · `npm run lint` ✅ · `npm test` ✅ · `npm run build` ✅. **Commit `9a0c3be`.**
+**Vérifs** : smoke **rouge sur le code buggé → vert après fix** (preuve qu'il attrape la classe de bug) · `npm run lint` ✅ · `npm test` ✅ · `npm run build` ✅. **Commit `8bed676`.**
 
 ### Tâche 1.1 — Suivi du poids (session du 09/06/2026)
 - `src/lib/weight.js` (logique pure, testable node) : `movingAverage` trailing **7 derniers points** (caveat commenté : fenêtre = points, pas jours → sauts de pesée bruitent la tendance ; calendaire **reporté**), `trend` (down/up/flat + delta), `shouldWeighNow` (matin < 12h ET pas encore pesé).
@@ -36,7 +36,7 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - **Schéma inchangé** : `weightLogs` déjà en v2 et déjà dans `TABLES` → export/import couvre la pesée sans modif.
 - Décision design actée : **D14** (moyenne glissante trailing N points, voir DECISIONS.md).
 
-**Vérifs** : `tests/weight.test.mjs` ✅ (moyenne glissante sur séries connues, valeurs exactes ; tendance ; heuristique — branché dans `npm test`) · smoke Playwright **persistance pesée** ✅ (saisie `77,7` → reload → relue + Jour reflète la pesée) · `npm run lint` ✅ · `npm run build` ✅ · `npm test` migration **reste vert**. **Commit `f0556fb`.**
+**Vérifs** : `tests/weight.test.mjs` ✅ (moyenne glissante sur séries connues, valeurs exactes ; tendance ; heuristique — branché dans `npm test`) · smoke Playwright **persistance pesée** ✅ (saisie `77,7` → reload → relue + Jour reflète la pesée) · `npm run lint` ✅ · `npm run build` ✅ · `npm test` migration **reste vert**. **Commit `098bb88`.**
 
 ### Tâche 2 — Profil / moteur de calcul métabolique (session du 09/06/2026)
 - `src/lib/metabolic.js` (moteur pur, testable node) : BMR **Mifflin-St Jeor** (défaut) / **Katch-McArdle** (si %MG saisi), **5 multiplicateurs** TDEE (1.2→1.9), cibles par objectif (**recomp = TDEE×0,90, prot 2,0 g/kg, lip 0,8 g/kg, glucides = reste, sucres <20 acté**), IMC, **garde-fous codés en dur** (plancher kcal ♂1500/♀1200, déficit plafonné −20 %, prot ≥1,6 g/kg, lip ≥0,6 g/kg, glucides jamais négatifs).
@@ -46,7 +46,7 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - **Schéma inchangé** (`DEXIE_VERSION`/`SCHEMA_VERSION` = 2) : champs `settings` non indexés, additifs, rétro-compatibles ; export couvre via `TABLES` (lignes complètes). Calibrage TDEE empirique **différé** (seam centralisé dans `metabolic.js`).
 - Décisions actées : **D15** (politique cibles recomp + garde-fous). Voir DECISIONS.md.
 
-**Vérifs** : `tests/metabolic.test.mjs` ✅ (BMR valeurs connues, multiplicateurs, cibles recomp 2483/160/317/64, **garde-fous qui bloquent** + invariant balayage) · smoke Playwright ✅ (onboarding → cibles calculées 2483 → reload profil persisté) · `tests/migration.test.mjs` assertion reseed adaptée au dé-seed ✅ · `npm run lint`/`build`/`test` ✅. **Commit `c754429`.**
+**Vérifs** : `tests/metabolic.test.mjs` ✅ (BMR valeurs connues, multiplicateurs, cibles recomp 2483/160/317/64, **garde-fous qui bloquent** + invariant balayage) · smoke Playwright ✅ (onboarding → cibles calculées 2483 → reload profil persisté) · `tests/migration.test.mjs` assertion reseed adaptée au dé-seed ✅ · `npm run lint`/`build`/`test` ✅. **Commit `de0dc89`.**
 
 ### Tâche 3 — Tickers interactifs (session du 09/06/2026)
 - `src/lib/tickers.js` (logique extraite, testable node) : `nextValue` (counter `inc`/`dec` borné à 0 / checkbox `toggle`), `clampCounter`, `loadActiveConfigs` (triés par `order`), `loadStates(date)` (map tickerId→valeur, **absence ⇒ 0**), `setValue` (**upsert** sur la clé `(tickerId, date)` : `newRow()` à la 1ʳᵉ écriture du jour, `touch()` ensuite → jamais de doublon ; ligne à 0 conservée plutôt que supprimée — 0 explicite ≡ absence).
@@ -54,7 +54,7 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - **Schéma inchangé** : `tickerStates` déjà en v2 et dans `TABLES` → export/import couvre sans modif `db.js`. Pas de nouvelle décision (D3/D10/D11 appliquées).
 - **Tickers figés** (les 4 seedés) : ajout/retrait/cible/ordre par l'utilisateur **différé** → tranche future au ROADMAP.
 
-**Vérifs** : `tests/tickers.test.mjs` ✅ (nextValue/clamp purs ; upsert sans doublon ; **« autre date repart à 0 »** prouvé en base) — branché dans `npm test` (migration/weight/metabolic **restent verts**) · smoke Playwright ✅ (0 → +3 → −1 → clamp 0 → 2 + Créatine cochée → **reload : état du jour conservé** ; injection d'une ligne d'hier qui ne remonte pas aujourd'hui) · `npm run lint`/`build` ✅. **Commit `738582e`.**
+**Vérifs** : `tests/tickers.test.mjs` ✅ (nextValue/clamp purs ; upsert sans doublon ; **« autre date repart à 0 »** prouvé en base) — branché dans `npm test` (migration/weight/metabolic **restent verts**) · smoke Playwright ✅ (0 → +3 → −1 → clamp 0 → 2 + Créatine cochée → **reload : état du jour conservé** ; injection d'une ligne d'hier qui ne remonte pas aujourd'hui) · `npm run lint`/`build` ✅. **Commit `6406954`.**
 
 ### Tâche 4 — Bilan énergétique (session du 09/06/2026)
 - `src/lib/expenditure.js` (nouveau, testable node) : table dédiée **`dailyExpenditure`** (`{ id, date, kcal, updatedAt }`, **1 ligne par date, absence = non saisi**) ; `loadExpenditure`/`setExpenditure`/`clearExpenditure` (upsert **atomique** en transaction rw) + `energyBalance` pur (consommé − dépensé, **calculé jamais stocké**).
@@ -63,9 +63,9 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - **Garde-fou anti-perte de données** : `migrate.js` — wipe legacy réservé aux bases **pré-UUID** (`verno < FIRST_UUID_DEXIE_VERSION`) ; une base v2 réelle **n'est jamais wipée** (upgrade additif Dexie).
 - Décision actée : **D16** (versioning additif + corollaires : SCHEMA_VERSION découplé, import atomique, dépense en table dédiée). Voir DECISIONS.md.
 
-**Vérifs** : `tests/expenditure.test.mjs` ✅ (energyBalance ; upsert/absence/clear ; **double-write concurrent → 1 ligne**) · `migration.test.mjs` **S5** ✅ (base v2 réelle → bump v3 → **données préservées**, store vide, 0 backup wipe) + **S6** ✅ (tolérance import : bundle v2 sans la table + table inconnue → pas de throw → justifie SCHEMA_VERSION=2) · smoke Playwright **bilan** ✅ (repas injecté 600 + dépense 2500 → **−1900**, persistance reload, **1 ligne keyée par date**) · suites migration/weight/metabolic/tickers **restent vertes** · `npm run lint`/`build` ✅. **Commits `f59d3cc` (feat) + `6d174bc` (harden, review).**
+**Vérifs** : `tests/expenditure.test.mjs` ✅ (energyBalance ; upsert/absence/clear ; **double-write concurrent → 1 ligne**) · `migration.test.mjs` **S5** ✅ (base v2 réelle → bump v3 → **données préservées**, store vide, 0 backup wipe) + **S6** ✅ (tolérance import : bundle v2 sans la table + table inconnue → pas de throw → justifie SCHEMA_VERSION=2) · smoke Playwright **bilan** ✅ (repas injecté 600 + dépense 2500 → **−1900**, persistance reload, **1 ligne keyée par date**) · suites migration/weight/metabolic/tickers **restent vertes** · `npm run lint`/`build` ✅. **Commits `8739e19` (feat) + `ae947ae` (harden, review).**
 
-_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) + Tâche 3 tickers (738582e) + **Tâche 4 bilan énergétique (f59d3cc + harden 6d174bc)** faits, validés, commités. **Quotidien utilisable bouclé ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
+_MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + **Tâche 4 bilan énergétique (8739e19 + harden ae947ae)** faits, validés, commités. **Quotidien utilisable bouclé ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
 
 ## En cours
 - (rien) — Tâche 4 close ; reste la Nutrition (gros chantier dédié) pour clore la Phase 1.
@@ -74,12 +74,12 @@ _MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0
 > **NUTRITION** (gros chantier, à attaquer en **discussion dédiée** — voir section dédiée plus bas). Bibliothèque d'ingrédients bruts /100 g + composition d'un plat par pesée → `journalEntries` (macros figées, D1) + migration des ~38 boissons. **Une fois la nutrition là, le côté « consommé » du bilan (Tâche 4) s'allume seul** (déjà câblé sur `journalEntries`). **Ne rien coder de nutrition hors de cette discussion dédiée.**
 
 ## À faire — séquence (validation entre chaque)
-1. ~~**1.0 Migration v2**~~ ✅ commitée (939dd7f).
-2. ~~**fix écran Jour blanc**~~ ✅ + smoke Playwright committé (9a0c3be).
-3. ~~**1.1 Suivi du poids**~~ ✅ commitée (f0556fb).
-4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (c754429).
-5. ~~**Tâche 3 Tickers interactifs**~~ ✅ commitée (738582e).
-6. ~~**Tâche 4 Bilan énergétique**~~ ✅ commitée (f59d3cc + harden 6d174bc).
+1. ~~**1.0 Migration v2**~~ ✅ commitée (befd12a).
+2. ~~**fix écran Jour blanc**~~ ✅ + smoke Playwright committé (8bed676).
+3. ~~**1.1 Suivi du poids**~~ ✅ commitée (098bb88).
+4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (de0dc89).
+5. ~~**Tâche 3 Tickers interactifs**~~ ✅ commitée (6406954).
+6. ~~**Tâche 4 Bilan énergétique**~~ ✅ commitée (8739e19 + harden ae947ae).
 7. **Nutrition** — _prochaine action_ ci-dessus. **Discussion dédiée — clôt la Phase 1.**
 
 ## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
