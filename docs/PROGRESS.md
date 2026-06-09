@@ -56,13 +56,22 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 
 **Vérifs** : `tests/tickers.test.mjs` ✅ (nextValue/clamp purs ; upsert sans doublon ; **« autre date repart à 0 »** prouvé en base) — branché dans `npm test` (migration/weight/metabolic **restent verts**) · smoke Playwright ✅ (0 → +3 → −1 → clamp 0 → 2 + Créatine cochée → **reload : état du jour conservé** ; injection d'une ligne d'hier qui ne remonte pas aujourd'hui) · `npm run lint`/`build` ✅. **Commit `738582e`.**
 
-_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) + Tâche 3 tickers (738582e) faits, validés, commités. **Tâche 4 bilan énergétique : NON commencée.**_
+### Tâche 4 — Bilan énergétique (session du 09/06/2026)
+- `src/lib/expenditure.js` (nouveau, testable node) : table dédiée **`dailyExpenditure`** (`{ id, date, kcal, updatedAt }`, **1 ligne par date, absence = non saisi**) ; `loadExpenditure`/`setExpenditure`/`clearExpenditure` (upsert **atomique** en transaction rw) + `energyBalance` pur (consommé − dépensé, **calculé jamais stocké**).
+- `src/screens/Jour.jsx` : encart **« Bilan énergétique »** — saisie rapide de la **dépense TOTALE du jour** (1 nombre, pas de HealthKit) ; consommé **honnête** tant que la nutrition n'est pas suivie (« non suivi pour l'instant » / « en attente des repas ») ; bilan signé (déficit lime / surplus rose).
+- **Contrainte dure (table + export/import même tâche)** : `db.js` **`DEXIE_VERSION 2→3`** montée **ADDITIVE** (nouveau store, index **unique `&date`**) + ajout à `TABLES` ; `backup.js` `replace` vide TOUTES les tables (restauration intégrale atomique). **`SCHEMA_VERSION` gardé à 2** (table additive = rétro-compat import).
+- **Garde-fou anti-perte de données** : `migrate.js` — wipe legacy réservé aux bases **pré-UUID** (`verno < FIRST_UUID_DEXIE_VERSION`) ; une base v2 réelle **n'est jamais wipée** (upgrade additif Dexie).
+- Décision actée : **D16** (versioning additif + corollaires : SCHEMA_VERSION découplé, import atomique, dépense en table dédiée). Voir DECISIONS.md.
+
+**Vérifs** : `tests/expenditure.test.mjs` ✅ (energyBalance ; upsert/absence/clear ; **double-write concurrent → 1 ligne**) · `migration.test.mjs` **S5** ✅ (base v2 réelle → bump v3 → **données préservées**, store vide, 0 backup wipe) + **S6** ✅ (tolérance import : bundle v2 sans la table + table inconnue → pas de throw → justifie SCHEMA_VERSION=2) · smoke Playwright **bilan** ✅ (repas injecté 600 + dépense 2500 → **−1900**, persistance reload, **1 ligne keyée par date**) · suites migration/weight/metabolic/tickers **restent vertes** · `npm run lint`/`build` ✅. **Commits `f59d3cc` (feat) + `6d174bc` (harden, review).**
+
+_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) + Tâche 3 tickers (738582e) + **Tâche 4 bilan énergétique (f59d3cc + harden 6d174bc)** faits, validés, commités. **Quotidien utilisable bouclé ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
 
 ## En cours
-- (rien) — Tâche 3 close ; bilan énergétique à faire.
+- (rien) — Tâche 4 close ; reste la Nutrition (gros chantier dédié) pour clore la Phase 1.
 
 ## PROCHAINE ACTION CONCRÈTE
-> **Tâche 4 — Bilan énergétique** : consommé − dépensé sur l'écran Jour, avec **saisie manuelle rapide de la dépense du jour** (pas de HealthKit, D du cahier des charges). Décider où stocker la dépense (champ `settings` du jour ? table dédiée ?) → si nouvelle table/champ, mettre à jour `TABLES` + export/import **dans la même tâche** (contrainte dure).
+> **NUTRITION** (gros chantier, à attaquer en **discussion dédiée** — voir section dédiée plus bas). Bibliothèque d'ingrédients bruts /100 g + composition d'un plat par pesée → `journalEntries` (macros figées, D1) + migration des ~38 boissons. **Une fois la nutrition là, le côté « consommé » du bilan (Tâche 4) s'allume seul** (déjà câblé sur `journalEntries`). **Ne rien coder de nutrition hors de cette discussion dédiée.**
 
 ## À faire — séquence (validation entre chaque)
 1. ~~**1.0 Migration v2**~~ ✅ commitée (939dd7f).
@@ -70,7 +79,8 @@ _MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0
 3. ~~**1.1 Suivi du poids**~~ ✅ commitée (f0556fb).
 4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (c754429).
 5. ~~**Tâche 3 Tickers interactifs**~~ ✅ commitée (738582e).
-6. **Tâche 4 Bilan énergétique** — _prochaine action_ ci-dessus. **Pas commencée.**
+6. ~~**Tâche 4 Bilan énergétique**~~ ✅ commitée (f59d3cc + harden 6d174bc).
+7. **Nutrition** — _prochaine action_ ci-dessus. **Discussion dédiée — clôt la Phase 1.**
 
 ## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
 **Après** les tickers. À attaquer dans une **discussion neuve** :
