@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, ShieldCheck, HardDrive, Database, Archive } from 'lucide-react'
-import { TABLES } from '../db.js'
+import { Download, Upload, ShieldCheck, HardDrive, Database, Archive, UserCog } from 'lucide-react'
+import { db, TABLES, SETTINGS_KEY } from '../db.js'
 import { downloadBackup, importBundle, parseBackupFile, tableCounts, triggerDownload } from '../lib/backup.js'
 import { getMigrationBackups } from '../lib/migrate.js'
 import { requestPersistentStorage, storageEstimate } from '../lib/storage.js'
+import { GOALS } from '../lib/metabolic.js'
 import { C, num } from '../ui.js'
+import Profil from './Profil.jsx'
 
 const fmtBytes = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} Ko` : `${(b / 1024 / 1024).toFixed(1)} Mo`)
 
@@ -13,6 +15,8 @@ export default function Data() {
   const [persisted, setPersisted] = useState(null)
   const [estimate, setEstimate] = useState(null)
   const [backups, setBackups] = useState([])
+  const [settings, setSettings] = useState(null)
+  const [editingProfile, setEditingProfile] = useState(false)
   const [msg, setMsg] = useState(null)
   const fileRef = useRef(null)
 
@@ -20,6 +24,7 @@ export default function Data() {
     setCounts(await tableCounts())
     setEstimate(await storageEstimate())
     setBackups(await getMigrationBackups())
+    setSettings(await db.settings.get(SETTINGS_KEY))
   }
 
   useEffect(() => {
@@ -72,6 +77,53 @@ export default function Data() {
           }}
         >
           {msg.text}
+        </div>
+      )}
+
+      {/* Profil & cibles — édition / recalcul */}
+      {editingProfile ? (
+        <div className="rounded-2xl border overflow-hidden" style={{ background: C.surface, borderColor: C.line }}>
+          <div className="px-5 pt-4 flex items-center justify-between">
+            <span className="flex items-center gap-2 text-[13px] font-medium">
+              <UserCog size={16} style={{ color: C.energy }} /> Modifier le profil
+            </span>
+            <button onClick={() => setEditingProfile(false)} className="text-[12px] font-semibold" style={{ color: C.faint }}>
+              Annuler
+            </button>
+          </div>
+          <Profil
+            onDone={() => {
+              setEditingProfile(false)
+              refresh()
+            }}
+          />
+        </div>
+      ) : (
+        <div className="rounded-2xl p-4 border space-y-3" style={{ background: C.surface, borderColor: C.line }}>
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-[13px] font-medium">
+              <UserCog size={16} style={{ color: C.energy }} /> Profil &amp; cibles
+            </span>
+            <button onClick={() => setEditingProfile(true)} className="text-[12px] font-semibold" style={{ color: C.protein }}>
+              Éditer
+            </button>
+          </div>
+          {settings?.targetsSource === 'computed' ? (
+            <div className="grid grid-cols-2 gap-y-1.5 text-[12px]">
+              <span style={{ color: C.muted }}>Objectif</span>
+              <span style={{ color: C.text }}>{GOALS[settings.profile?.goal]?.label ?? '—'}</span>
+              <span style={{ color: C.muted }}>Calories</span>
+              <span style={{ ...num, color: C.text }}>{settings.targetKcal} kcal</span>
+              <span style={{ color: C.muted }}>Prot. / Gluc. / Lip.</span>
+              <span style={{ ...num, color: C.text }}>
+                {settings.targetProtein} / {settings.targetCarb} / {settings.targetFat} g
+              </span>
+            </div>
+          ) : (
+            <p className="text-[12px]" style={{ color: C.faint }}>
+              Profil non configuré.
+            </p>
+          )}
         </div>
       )}
 

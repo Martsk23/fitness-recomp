@@ -47,6 +47,17 @@ export default function Jour() {
 
   if (!settings) return null
 
+  // Fallback propre : tant que le profil n'a pas calculé de cibles, pas de budgets
+  // faux ni de NaN. (En pratique l'onboarding gate déjà l'app — ceinture + bretelles.)
+  if (settings.targetsSource !== 'computed' || settings.targetKcal == null) {
+    return (
+      <div className="px-5 py-16 text-center" style={{ color: C.muted }}>
+        <Scale size={22} style={{ color: C.faint }} className="mx-auto mb-2" />
+        <div className="text-[13px]">Configure ton profil pour calculer tes budgets.</div>
+      </div>
+    )
+  }
+
   const targetKcal = settings.targetKcal
   const remaining = Math.round(targetKcal - consumed.kcal)
   const pct = Math.min(100, (consumed.kcal / targetKcal) * 100)

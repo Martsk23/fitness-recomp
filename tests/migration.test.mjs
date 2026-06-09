@@ -79,7 +79,16 @@ async function s2_legacy() {
   await db.open()
   await seedIfEmpty()
   const settings = await db.settings.get(SETTINGS_KEY)
-  ok(settings && settings.targetKcal === 2100, 'RESEED (pas transform) : settings = seed, pas la valeur legacy 9999')
+  // Reseed (Tâche 2) : plus de cibles seedées en dur → settings frais = profil null,
+  // source 'fallback', sucres 20 ; surtout PAS la valeur perso legacy (9999).
+  ok(
+    settings &&
+      settings.targetKcal !== 9999 &&
+      settings.profile === null &&
+      settings.targetsSource === 'fallback' &&
+      settings.targetSugarsSimple === 20,
+    'RESEED (pas transform) : settings = seed frais (profil null, fallback), pas la valeur legacy 9999',
+  )
   ok((await db.tickerConfigs.count()) === 4, 'reseed : 4 tickers (pas le 1 legacy)')
   ok((await db.tickerStates.count()) === 0, 'reseed : tickerStates vide (données legacy non transférées en live)')
 

@@ -1,19 +1,51 @@
-import { useState } from 'react'
-import { CalendarDays, Settings, Sun, Plus, Scale, Dumbbell, MessageCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { CalendarDays, Settings, Sun, Plus, Scale, Dumbbell, MessageCircle, UserCog } from 'lucide-react'
 import { C, formatFrDate } from './ui.js'
+import { db, SETTINGS_KEY } from './db.js'
+import { isProfileComplete } from './lib/metabolic.js'
 import Jour from './screens/Jour.jsx'
 import Data from './screens/Data.jsx'
 import Poids from './screens/Poids.jsx'
+import Profil from './screens/Profil.jsx'
 
 export default function App() {
   const [tab, setTab] = useState('jour')
+  const [ready, setReady] = useState(false)
+  const [needsOnboarding, setNeedsOnboarding] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const s = await db.settings.get(SETTINGS_KEY)
+      if (!alive) return
+      setNeedsOnboarding(!isProfileComplete(s?.profile))
+      setReady(true)
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (!ready) return null
+
+  // Onboarding one-shot : profil vide → on remplace le shell par le formulaire.
+  if (needsOnboarding) {
+    return (
+      <Shell>
+        <div className="px-5 pt-6 pb-2 flex items-center gap-2" style={{ color: C.text }}>
+          <UserCog size={18} style={{ color: C.energy }} />
+          <span className="text-[15px] font-semibold">Bienvenue — configure ton profil</span>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <Profil onboarding onDone={() => setNeedsOnboarding(false)} />
+        </div>
+      </Shell>
+    )
+  }
 
   return (
-    <div className="min-h-screen w-full flex justify-center py-6 px-3" style={{ background: '#05070A' }}>
-      <div
-        className="w-full max-w-[400px] rounded-[34px] border overflow-hidden shadow-2xl flex flex-col"
-        style={{ background: C.bg, color: C.text, borderColor: C.line }}
-      >
+    <Shell>
+      <>
         {/* ── En-tête : date · chip Recomp · réglages ─────────────── */}
         <div className="px-5 pt-6 pb-2 flex items-center justify-between">
           <div className="flex items-center gap-2" style={{ color: C.muted }}>
@@ -56,6 +88,20 @@ export default function App() {
           <TabBtn icon={Dumbbell} label="Perf" id="perf" tab={tab} set={setTab} />
           <TabBtn icon={MessageCircle} label="Chat" id="chat" tab={tab} set={setTab} />
         </div>
+      </>
+    </Shell>
+  )
+}
+
+// Cadre « téléphone » partagé (onboarding + app).
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen w-full flex justify-center py-6 px-3" style={{ background: '#05070A' }}>
+      <div
+        className="w-full max-w-[400px] rounded-[34px] border overflow-hidden shadow-2xl flex flex-col"
+        style={{ background: C.bg, color: C.text, borderColor: C.line }}
+      >
+        {children}
       </div>
     </div>
   )

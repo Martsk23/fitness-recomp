@@ -1,4 +1,5 @@
 import { db, nowMs, newRow, SETTINGS_KEY } from './db.js'
+import { SUGARS_SIMPLE_MAX } from './lib/metabolic.js'
 
 // Tickers par défaut : eau (compteur de verres) + compléments (cases).
 // Non-perso → OK de les seeder pour tout le monde.
@@ -9,16 +10,19 @@ const DEFAULT_TICKERS = [
   { label: 'Oméga-3', type: 'checkbox', target: 1, icon: 'pill', order: 4, active: true },
 ]
 
-// Réglages de départ. NB : les cibles caloriques/macros perso seront
-// dé-seedées et remplacées par le calcul d'onboarding (Tâche 2) ; pour
-// l'instant on garde des valeurs de fonctionnement + la règle sucres.
+// Réglages de départ (Tâche 2). Plus de cibles kcal/macros en dur : elles sont
+// CALCULÉES par l'onboarding depuis le profil (moteur metabolic.js). On amorce
+// donc sans profil → l'app affiche l'onboarding au 1er lancement. Seule la règle
+// sucres simples (DÉJÀ ACTÉE) est seedée, car non dérivée du profil.
 const DEFAULT_SETTINGS = {
   id: SETTINGS_KEY,
-  targetKcal: 2100,
-  targetProtein: 165,
-  targetCarb: 200,
-  targetFat: 60,
-  targetSugarsSimple: 20,
+  profile: null,
+  targetsSource: 'fallback', // 'computed' une fois l'onboarding fait
+  targetKcal: null,
+  targetProtein: null,
+  targetCarb: null,
+  targetFat: null,
+  targetSugarsSimple: SUGARS_SIMPLE_MAX,
   preferences: {},
 }
 
