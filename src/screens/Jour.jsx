@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Sun, TrendingDown, TrendingUp, Minus, Scale } from 'lucide-react'
+import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot } from 'lucide-react'
 import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
 import { trend, shouldWeighNow } from '../lib/weight.js'
+import { loadActiveConfigs, loadStates, setValue, nextValue } from '../lib/tickers.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
@@ -133,6 +134,9 @@ export default function Jour() {
         </div>
       </div>
 
+      {/* Routine du jour : tickers interactifs (eau + compléments) */}
+      <Tickers />
+
       {/* Poids du jour + tendance, ou invitation à se peser le matin */}
       <WeightCard today={weight.today} t={weight.t} />
 
@@ -234,6 +238,115 @@ function WeightCard({ today, t }) {
     >
       <Scale size={16} style={{ color: C.faint }} /> Pas encore pesé aujourd'hui.
     </div>
+  )
+}
+
+// ── Tickers interactifs (routine du jour) ──────────────────────────
+// Compteurs (eau) : − / + bornés à 0. Cases (compléments) : toggle.
+// État keyé par (tickerId, date) → reset auto à minuit (D3), pas de cron.
+const TICKER_ICONS = { droplet: Droplet, pill: Pill }
+
+function Tickers() {
+  const [configs, setConfigs] = useState(null)
+  const [states, setStates] = useState({})
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const [cfgs, st] = await Promise.all([loadActiveConfigs(), loadStates()])
+      if (alive) {
+        setConfigs(cfgs)
+        setStates(st)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  async function act(cfg, action) {
+    const v = nextValue(cfg, states[cfg.id] || 0, action)
+    setStates((s) => ({ ...s, [cfg.id]: v })) // optimiste : retour tactile immédiat
+    await setValue(cfg.id, v) // persiste sur la clé du jour
+  }
+
+  if (!configs || configs.length === 0) return null
+  const done = configs.filter((c) => (states[c.id] || 0) >= c.target).length
+
+  return (
+    <div className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+          Routine du jour
+        </span>
+        <span className="text-[12px] font-semibold" style={{ color: done === configs.length ? C.energy : C.muted, ...num }}>
+          {done} / {configs.length}
+        </span>
+      </div>
+      <div className="space-y-2.5">
+        {configs.map((cfg) => {
+          const Icon = TICKER_ICONS[cfg.icon] || CircleDot
+          const v = states[cfg.id] || 0
+          const reached = v >= cfg.target
+          return (
+            <div key={cfg.id} className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-[13px] font-medium">
+                <Icon size={15} style={{ color: reached ? C.energy : C.muted }} />
+                {cfg.label}
+              </span>
+              {cfg.type === 'counter' ? (
+                <div className="flex items-center gap-2.5">
+                  <StepBtn label={`Décrémenter ${cfg.label}`} onClick={() => act(cfg, 'dec')} disabled={v === 0}>
+                    <Minus size={15} />
+                  </StepBtn>
+                  <span
+                    data-testid={`ticker-value-${cfg.label}`}
+                    style={num}
+                    className="text-[13px] font-semibold tabular-nums min-w-[44px] text-center"
+                  >
+                    <span style={{ color: reached ? C.energy : C.text }}>{v}</span>
+                    <span style={{ color: C.faint }}> / {cfg.target}</span>
+                  </span>
+                  <StepBtn label={`Incrémenter ${cfg.label}`} onClick={() => act(cfg, 'inc')}>
+                    <Plus size={15} />
+                  </StepBtn>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => act(cfg, 'toggle')}
+                  aria-label={`Cocher ${cfg.label}`}
+                  aria-pressed={reached}
+                  className="w-7 h-7 rounded-full flex items-center justify-center border active:scale-90 transition"
+                  style={{
+                    background: reached ? C.energy : 'transparent',
+                    borderColor: reached ? C.energy : C.line,
+                    color: reached ? '#0B0E13' : C.faint,
+                  }}
+                >
+                  {reached && <Check size={16} strokeWidth={3} />}
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function StepBtn({ label, onClick, disabled, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="w-7 h-7 rounded-full flex items-center justify-center border active:scale-90 transition disabled:opacity-30"
+      style={{ background: C.surfaceHi, borderColor: C.line, color: C.text }}
+    >
+      {children}
+    </button>
   )
 }
 

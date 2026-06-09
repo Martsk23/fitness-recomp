@@ -37,6 +37,91 @@ test('onboarding au 1er lancement → Jour avec cibles CALCULÉES → profil per
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+// 'YYYY-MM-DD' local (même convention que ui.js todayKey).
+function dayKey(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+test('tickers : incrément/décrément borné à 0, toggle, état du jour persisté, autre date repart à 0', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  const eau = page.getByTestId('ticker-value-Eau')
+  const inc = page.getByRole('button', { name: 'Incrémenter Eau' })
+  const dec = page.getByRole('button', { name: 'Décrémenter Eau' })
+  const creatine = page.getByRole('button', { name: 'Cocher Créatine' })
+
+  // Absence de ligne = 0.
+  await expect(eau).toHaveText('0 / 8')
+
+  // Incrément ×3 puis décrément ×1.
+  await inc.click()
+  await inc.click()
+  await inc.click()
+  await expect(eau).toHaveText('3 / 8')
+  await dec.click()
+  await expect(eau).toHaveText('2 / 8')
+
+  // Décrément sous 0 → borné à 0 (clic ×4 depuis 2 ; bouton se désactive à 0).
+  await dec.click()
+  await dec.click()
+  await expect(eau).toHaveText('0 / 8')
+  await expect(dec).toBeDisabled()
+
+  // Remonte à 2 + coche un complément.
+  await inc.click()
+  await inc.click()
+  await expect(eau).toHaveText('2 / 8')
+  await creatine.click()
+  await expect(creatine).toHaveAttribute('aria-pressed', 'true')
+
+  // Persistance réelle : reload (IndexedDB) → état du jour conservé.
+  await page.reload()
+  await expect(page.getByTestId('ticker-value-Eau')).toHaveText('2 / 8')
+  await expect(page.getByRole('button', { name: 'Cocher Créatine' })).toHaveAttribute('aria-pressed', 'true')
+
+  // "Autre date repart à 0" : on injecte une ligne d'HIER (valeur 9) directement
+  // dans IndexedDB ; elle ne doit PAS remonter dans l'affichage d'aujourd'hui.
+  const yKey = dayKey(new Date(Date.now() - 86_400_000))
+  await page.evaluate(async (ydate) => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const cfgs = await new Promise((res, rej) => {
+      const req = idb.transaction('tickerConfigs', 'readonly').objectStore('tickerConfigs').getAll()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    const eauCfg = cfgs.find((c) => c.label === 'Eau')
+    await new Promise((res, rej) => {
+      const tx = idb.transaction('tickerStates', 'readwrite')
+      tx.objectStore('tickerStates').put({
+        id: crypto.randomUUID(),
+        tickerId: eauCfg.id,
+        date: ydate,
+        value: 9,
+        updatedAt: Date.now(),
+      })
+      tx.oncomplete = () => res()
+      tx.onerror = () => rej(tx.error)
+    })
+    idb.close()
+  }, yKey)
+
+  await page.reload()
+  // Aujourd'hui inchangé (2), la ligne d'hier (9) n'a pas fui dans le jour courant.
+  await expect(page.getByTestId('ticker-value-Eau')).toHaveText('2 / 8')
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)
