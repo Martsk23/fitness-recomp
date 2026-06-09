@@ -7,7 +7,14 @@ import Dexie from 'dexie'
 // Deux constantes DISTINCTES :
 //  - DEXIE_VERSION  : version du store IndexedDB (mécanique Dexie).
 //  - SCHEMA_VERSION : version du format d'export JSON (compat backups).
-export const DEXIE_VERSION = 2
+export const DEXIE_VERSION = 3
+// Première version à PK UUID. À partir d'elle, les montées de version sont
+// ADDITIVES (nouveau store / index) → Dexie les applique sans wipe. Le wipe
+// destructif (D13) est réservé aux bases ANTÉRIEURES (v1, PK auto-incrément).
+export const FIRST_UUID_DEXIE_VERSION = 2
+// SCHEMA_VERSION reste à 2 : l'ajout de la table `dailyExpenditure` est
+// rétro-compatible à l'import (table absente d'un vieux bundle ⇒ vide). Pas de
+// rupture du format → on NE bumpe PAS (un bump rejetterait les backups v2).
 export const SCHEMA_VERSION = 2
 
 // settings est un singleton → clé sentinelle fixe (lecture déterministe).
@@ -29,6 +36,14 @@ db.version(DEXIE_VERSION).stores({
   settings: 'id',
 })
 
+// v3 — montée ADDITIVE (Tâche 4) : nouveau store `dailyExpenditure` (dépense
+// énergétique totale du jour, 1 ligne par date). Les stores v2 sont conservés
+// tels quels par Dexie ; seul le nouveau store est créé. Aucune base v2 n'est
+// wipée (cf. migrate.js : wipe réservé à v1).
+db.version(DEXIE_VERSION).stores({
+  dailyExpenditure: 'id, date',
+})
+
 // Source unique de vérité pour l'export/import. Garder synchronisé avec stores().
 export const TABLES = [
   'ingredients',
@@ -40,6 +55,7 @@ export const TABLES = [
   'tickerStates',
   'drinks',
   'settings',
+  'dailyExpenditure',
 ]
 
 // ── Helpers d'écriture ─────────────────────────────────────────────

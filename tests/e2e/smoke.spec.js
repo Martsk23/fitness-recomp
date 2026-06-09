@@ -122,6 +122,83 @@ test('tickers : incrément/décrément borné à 0, toggle, état du jour persis
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('bilan énergétique : dépense saisie persistée, consommé − dépensé correct, 1 ligne keyée par date', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // La nutrition n'est pas encore implémentée : on injecte un repas du jour
+  // directement dans IndexedDB (consommé = 600 kcal) pour activer le côté
+  // "consommé" du bilan et prouver le calcul end-to-end.
+  const tKey = dayKey(new Date())
+  await page.evaluate(async (tdate) => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    await new Promise((res, rej) => {
+      const tx = idb.transaction('journalEntries', 'readwrite')
+      tx.objectStore('journalEntries').put({
+        id: crypto.randomUUID(),
+        date: tdate,
+        sourceType: 'ingredient',
+        sourceId: 'seed-test',
+        nameSnapshot: 'Repas test',
+        grams: 100,
+        kcal: 600,
+        protein: 0,
+        carb: 0,
+        sugarsSimple: 0,
+        fat: 0,
+        createdAt: Date.now(),
+        loggedAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      tx.oncomplete = () => res()
+      tx.onerror = () => rej(tx.error)
+    })
+    idb.close()
+  }, tKey)
+  await page.reload() // Jour recharge le consommé du jour (profil déjà persisté → pas de ré-onboarding)
+
+  // Dépense non saisie au départ → champ ouvert. On saisit la dépense totale.
+  await page.getByLabel('Dépense totale du jour en kcal').fill('2500')
+  await page.getByRole('button', { name: 'Enregistrer la dépense' }).click()
+  await expect(page.getByTestId('expenditure-value')).toHaveText('2500')
+
+  // Bilan = consommé 600 − dépensé 2500 = −1900 kcal.
+  await expect(page.getByTestId('energy-balance')).toHaveText('-1900 kcal')
+
+  // Persistance réelle : reload (IndexedDB) → dépense conservée, bilan recalculé.
+  await page.reload()
+  await expect(page.getByTestId('expenditure-value')).toHaveText('2500')
+  await expect(page.getByTestId('energy-balance')).toHaveText('-1900 kcal')
+
+  // Une seule ligne, keyée par la date du jour (⇒ une autre date reste vierge).
+  const rows = await page.evaluate(async () => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const all = await new Promise((res, rej) => {
+      const req = idb.transaction('dailyExpenditure', 'readonly').objectStore('dailyExpenditure').getAll()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    idb.close()
+    return all
+  })
+  expect(rows.length).toBe(1)
+  expect(rows[0].date).toBe(tKey)
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)

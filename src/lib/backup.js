@@ -59,11 +59,15 @@ export async function importBundle(bundle, { replace = true } = {}) {
 
   const tables = TABLES.map((t) => db.table(t))
   await db.transaction('rw', tables, async () => {
+    // Replace = restauration intégrale : on vide TOUTES les tables d'abord, même
+    // celles absentes du bundle (ex. un vieux backup v2 sans `dailyExpenditure`
+    // doit laisser cette table VIDE, pas conserver des lignes du device).
+    if (replace) {
+      for (const t of TABLES) await db.table(t).clear()
+    }
     for (const t of TABLES) {
       const rows = data[t]
-      if (!Array.isArray(rows)) continue
-      if (replace) await db.table(t).clear()
-      if (rows.length) await db.table(t).bulkPut(rows)
+      if (Array.isArray(rows) && rows.length) await db.table(t).bulkPut(rows)
     }
   })
 

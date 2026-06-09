@@ -27,6 +27,20 @@ const V1_STORES = {
   settings: '++id',
 }
 
+// Schéma v2 EXACT (PK string UUID) — doit refléter db.js version(2).stores().
+// Sert à fabriquer une base v2 réelle pour prouver l'upgrade additif v2→v3.
+const V2_STORES = {
+  ingredients: 'id, name, category',
+  journalEntries: 'id, date, [date+sourceType], sourceId',
+  weightLogs: 'id, date, datetime',
+  workouts: 'id, date',
+  sets: 'id, workoutId, exercise, [exercise+date]',
+  tickerConfigs: 'id, order',
+  tickerStates: 'id, [tickerId+date], date',
+  drinks: 'id, name, category',
+  settings: 'id',
+}
+
 async function wipeAll() {
   if (db.isOpen()) db.close()
   await Dexie.delete('fitnessRecomp')
@@ -177,11 +191,45 @@ async function s4_roundtrip(v1data) {
   ok(norm(exp1) === norm(exp2), 'round-trip stable : ré-export identique (updatedAt préservé)')
 }
 
+// ── S5 — Base v2 RÉELLE → bump v3 = upgrade ADDITIF (PAS de wipe) ───
+// Garde-fou anti-perte de données : un device en v2 (vraies données) ne doit
+// JAMAIS être wipé par le bump Tâche 4. Dexie ajoute le store dailyExpenditure
+// et préserve tout le reste.
+async function s5_v2_to_v3() {
+  console.log('\n— S5 : upgrade additif v2 → v3 (préservation des données) —')
+  await wipeAll()
+
+  // Fabrique une base v2 réelle (PK UUID, version Dexie 2) avec des données.
+  const v2 = new Dexie('fitnessRecomp')
+  v2.version(2).stores(V2_STORES)
+  await v2.open()
+  ok(v2.verno === 2, 'base fabriquée en version Dexie 2')
+  await v2.weightLogs.add({ id: crypto.randomUUID(), date: '2026-06-09', datetime: 1, weightKg: 77, updatedAt: Date.now() })
+  await v2.settings.add({ id: SETTINGS_KEY, profile: null, targetsSource: 'fallback', targetSugarsSimple: 20, updatedAt: Date.now() })
+  v2.close()
+
+  // migrate ne doit PAS wiper : v2 ≥ FIRST_UUID → 'dexie-upgrade'.
+  const r = await migrateLegacyIfNeeded()
+  ok(r.migrated === false && r.reason === 'dexie-upgrade', 'base v2 → PAS de wipe (upgrade additif Dexie)')
+  ok((await Dexie.exists('fitnessRecomp')) === true, 'base conservée (jamais supprimée)')
+  ok((await getMigrationBackups()).length === 0, 'aucun backup de wipe créé (rien à sauver, rien wipé)')
+
+  // db.open() applique version(3) → ajoute le store, préserve les données.
+  await db.open()
+  ok(db.verno >= 3, 'base montée en version Dexie ≥ 3')
+  ok((await db.weightLogs.count()) === 1, 'DONNÉES PRÉSERVÉES : la pesée v2 survit à l\'upgrade')
+  const s = await db.settings.get(SETTINGS_KEY)
+  ok(!!s && s.targetSugarsSimple === 20, 'DONNÉES PRÉSERVÉES : settings v2 intacts')
+  ok((await db.dailyExpenditure.count()) === 0, 'nouveau store dailyExpenditure créé et vide')
+  if (db.isOpen()) db.close()
+}
+
 async function main() {
   await s1_fresh()
   await s2_legacy()
   const v1data = s3_transform()
   await s4_roundtrip(v1data)
+  await s5_v2_to_v3()
   if (db.isOpen()) db.close()
   console.log(`\n${exitCode === 0 ? 'TOUS LES TESTS PASSENT' : 'ÉCHECS DÉTECTÉS'}`)
   process.exit(exitCode)

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot } from 'lucide-react'
+import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot, Flame } from 'lucide-react'
 import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
 import { trend, shouldWeighNow } from '../lib/weight.js'
 import { loadActiveConfigs, loadStates, setValue, nextValue } from '../lib/tickers.js'
+import { loadExpenditure, setExpenditure, clearExpenditure, energyBalance } from '../lib/expenditure.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
@@ -134,6 +135,9 @@ export default function Jour() {
         </div>
       </div>
 
+      {/* Bilan énergétique : consommé − dépense totale du jour (saisie manuelle) */}
+      <Bilan consumedKcal={consumed.kcal} tracked={entryCount > 0} />
+
       {/* Routine du jour : tickers interactifs (eau + compléments) */}
       <Tickers />
 
@@ -237,6 +241,160 @@ function WeightCard({ today, t }) {
       style={{ background: C.surface, borderColor: C.line, color: C.muted }}
     >
       <Scale size={16} style={{ color: C.faint }} /> Pas encore pesé aujourd'hui.
+    </div>
+  )
+}
+
+// ── Bilan énergétique (consommé − dépense totale du jour) ──────────
+// Dépense = 1 nombre par date (saisie manuelle rapide, pas de HealthKit),
+// stockée dans `dailyExpenditure` ; absence = non saisi. Le bilan est CALCULÉ.
+// Tant que la nutrition n'est pas implémentée (journal vide), on affiche un
+// état honnête côté consommé plutôt qu'un faux déficit.
+function Bilan({ consumedKcal, tracked }) {
+  const [exp, setExp] = useState(undefined) // undefined = chargement · null = non saisi · nombre = kcal
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const v = await loadExpenditure()
+      if (alive) {
+        setExp(v)
+        setEditing(v == null) // pas encore saisi → champ de saisie ouvert
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (exp === undefined) return null
+
+  async function save() {
+    const n = Number(draft.replace(',', '.'))
+    if (!Number.isFinite(n) || n < 0) return
+    const k = Math.round(n)
+    setExp(k)
+    setEditing(false)
+    setDraft('')
+    await setExpenditure(k)
+  }
+
+  async function reset() {
+    setExp(null)
+    setEditing(true)
+    setDraft('')
+    await clearExpenditure()
+  }
+
+  const balance = energyBalance(consumedKcal, exp)
+
+  return (
+    <div className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+          Bilan énergétique
+        </span>
+        <Flame size={14} style={{ color: C.carb }} />
+      </div>
+
+      {/* Dépense totale du jour : saisie / affichage */}
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: C.muted }}>
+          <Flame size={15} style={{ color: C.carb }} /> Dépense totale du jour
+        </span>
+        {editing ? (
+          <div className="flex items-center gap-2">
+            <input
+              inputMode="numeric"
+              aria-label="Dépense totale du jour en kcal"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && save()}
+              placeholder="kcal"
+              className="w-20 text-right rounded-lg px-2 py-1 text-[13px] border tabular-nums"
+              style={{ background: C.surfaceHi, borderColor: C.line, color: C.text }}
+            />
+            <button
+              type="button"
+              aria-label="Enregistrer la dépense"
+              onClick={save}
+              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg active:scale-95 transition"
+              style={{ background: C.energy, color: C.bg }}
+            >
+              OK
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label="Modifier la dépense du jour"
+            onClick={() => {
+              setEditing(true)
+              setDraft(String(exp))
+            }}
+            className="flex items-center gap-1.5 text-[13px] font-semibold active:scale-95 transition"
+            style={{ color: C.text }}
+          >
+            <span data-testid="expenditure-value" style={num}>
+              {exp}
+            </span>
+            <span style={{ color: C.faint }}>kcal</span>
+          </button>
+        )}
+      </div>
+
+      {/* Consommé : honnête tant que la nutrition n'est pas suivie */}
+      <div className="flex items-center justify-between mt-2.5 text-[13px]">
+        <span style={{ color: C.muted }}>Consommé</span>
+        {tracked ? (
+          <span style={num} className="font-medium">
+            {Math.round(consumedKcal)} kcal
+          </span>
+        ) : (
+          <span className="text-[12px]" style={{ color: C.faint }}>
+            non suivi pour l'instant
+          </span>
+        )}
+      </div>
+
+      {/* Bilan = consommé − dépensé (calculé, jamais stocké) */}
+      <div className="mt-3 pt-3 border-t flex items-center justify-between" style={{ borderColor: C.line }}>
+        <span className="text-[12px] font-medium" style={{ color: C.muted }}>
+          Bilan (consommé − dépensé)
+        </span>
+        {exp == null ? (
+          <span className="text-[12px]" style={{ color: C.faint }}>
+            saisis ta dépense
+          </span>
+        ) : !tracked ? (
+          <span className="text-[12px]" style={{ color: C.faint }}>
+            en attente des repas
+          </span>
+        ) : (
+          <span
+            data-testid="energy-balance"
+            className="text-[15px] font-bold"
+            style={{ color: balance < 0 ? C.energy : balance > 0 ? C.warn : C.muted, ...num }}
+          >
+            {balance > 0 ? '+' : ''}
+            {balance} kcal
+          </span>
+        )}
+      </div>
+
+      {/* Effacer la dépense (revient à "non saisi") — discret, seulement si saisie */}
+      {exp != null && !editing && (
+        <button
+          type="button"
+          onClick={reset}
+          className="mt-2 text-[11px]"
+          style={{ color: C.faint }}
+        >
+          Effacer la dépense du jour
+        </button>
+      )}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import Dexie from 'dexie'
-import { DEXIE_VERSION, SETTINGS_KEY, nowMs } from '../db.js'
+import { DEXIE_VERSION, FIRST_UUID_DEXIE_VERSION, SETTINGS_KEY, nowMs } from '../db.js'
 
 const DB_NAME = 'fitnessRecomp'
 const BACKUP_DB_NAME = 'fitnessRecompBackups'
@@ -41,13 +41,17 @@ export async function migrateLegacyIfNeeded() {
   // les stores réellement stockés. probe.verno = version Dexie courante.
   const probe = new Dexie(DB_NAME)
   await probe.open()
+  const verno = probe.verno
 
-  if (probe.verno >= DEXIE_VERSION) {
+  // v2+ (PK déjà en UUID) : NE JAMAIS wiper. Les montées de version ultérieures
+  // (nouveau store/index) sont ADDITIVES → Dexie les applique à db.open() sans
+  // toucher aux données du device. Le wipe destructif est réservé à v1.
+  if (verno >= FIRST_UUID_DEXIE_VERSION) {
     probe.close()
-    return { migrated: false, reason: 'already-current' }
+    return { migrated: false, reason: verno >= DEXIE_VERSION ? 'already-current' : 'dexie-upgrade' }
   }
 
-  // Base legacy v1 détectée → backup OBLIGATOIRE avant tout delete.
+  // Base legacy v1 détectée (PK auto-incrément) → backup OBLIGATOIRE avant tout delete.
   const backup = {
     app: 'fitness-recomp',
     schemaVersion: 1,
