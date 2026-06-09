@@ -148,7 +148,8 @@ export default function Data() {
         </button>
         <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} className="hidden" />
         <p className="text-[11.5px]" style={{ color: C.faint }}>
-          L'import <b>remplace</b> intégralement les données actuelles.
+          L'import <b>écrase TOUTES</b> les données actuelles par celles de la sauvegarde.
+          Une table absente du fichier (ex. une vieille sauvegarde sans dépenses) sera <b>vidée</b>.
         </p>
       </div>
 

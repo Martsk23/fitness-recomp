@@ -52,9 +52,20 @@ async function d_states() {
   // "autre date = vierge" : aucune ligne pour une autre date ⇒ non saisi
   ok((await loadExpenditure('2026-06-10')) === null, 'autre date : non saisi (null), aucune fuite')
 
-  // effacement → retour à non saisi (ligne supprimée)
+  // VERROU STRUCTUREL : deux écritures concurrentes sur la même date ne créent
+  // pas 2 lignes (upsert atomique + index unique &date). Sans verrou, le
+  // happy-path read-then-write pourrait insérer 2 fois.
+  const day2 = '2026-06-11'
+  await Promise.all([setExpenditure(2000, day2), setExpenditure(2100, day2)])
+  ok((await db.dailyExpenditure.where('date').equals(day2).count()) === 1, 'double write concurrent même date → 1 seule ligne')
+
+  // effacement → retour à non saisi (ligne du jour supprimée ; scope à la date,
+  // car le test de concurrence ci-dessus a laissé une ligne sur day2).
   await clearExpenditure(today)
-  ok((await loadExpenditure(today)) === null && (await db.dailyExpenditure.count()) === 0, 'clear → non saisi + ligne supprimée')
+  ok(
+    (await loadExpenditure(today)) === null && (await db.dailyExpenditure.where('date').equals(today).count()) === 0,
+    'clear → non saisi + ligne du jour supprimée',
+  )
 
   if (db.isOpen()) db.close()
 }

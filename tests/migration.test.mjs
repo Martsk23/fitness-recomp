@@ -224,12 +224,51 @@ async function s5_v2_to_v3() {
   if (db.isOpen()) db.close()
 }
 
+// ── S6 — Tolérance de l'import (ce qui AUTORISE à figer SCHEMA_VERSION à 2) ──
+// Le corollaire D16 « SCHEMA_VERSION reste 2 » n'est sûr que si l'importeur
+// tolère un bundle v2 sans la nouvelle table ET ignore une table inconnue. On
+// le PROUVE plutôt que de l'affirmer.
+async function s6_import_tolerance() {
+  console.log('\n— S6 : tolérance import (SCHEMA_VERSION figé à 2) —')
+  await wipeAll()
+  await db.open()
+
+  // Pré-état : une dépense déjà en base → le replace doit la VIDER (bundle sans table).
+  await db.dailyExpenditure.add({ id: crypto.randomUUID(), date: '2026-06-09', kcal: 2500, updatedAt: Date.now() })
+  ok((await db.dailyExpenditure.count()) === 1, 'pré-état : 1 dépense en base')
+
+  // Bundle v2 (schemaVersion 2) SANS dailyExpenditure + AVEC une table inconnue.
+  const bundle = {
+    app: 'fitness-recomp',
+    schemaVersion: 2,
+    data: {
+      settings: [{ id: SETTINGS_KEY, profile: null, targetsSource: 'fallback', targetSugarsSimple: 20, updatedAt: 1 }],
+      weightLogs: [{ id: crypto.randomUUID(), date: '2026-06-01', datetime: 1, weightKg: 79, updatedAt: 1 }],
+      futureUnknownTable: [{ id: 'x', foo: 1 }], // hors TABLES → doit être ignorée
+    },
+  }
+
+  let threw = false
+  try {
+    await importBundle(bundle, { replace: true })
+  } catch {
+    threw = true
+  }
+  ok(!threw, 'import bundle v2 sans dailyExpenditure + table inconnue → AUCUN throw')
+  ok((await db.dailyExpenditure.count()) === 0, 'dailyExpenditure VIDÉE par le replace (table absente du bundle)')
+  ok((await db.weightLogs.count()) === 1, 'tables présentes bien importées (weightLogs)')
+  ok((await db.settings.get(SETTINGS_KEY))?.targetSugarsSimple === 20, 'settings importé')
+  ok(!db.tables.some((t) => t.name === 'futureUnknownTable'), 'table inconnue ignorée (jamais créée)')
+  if (db.isOpen()) db.close()
+}
+
 async function main() {
   await s1_fresh()
   await s2_legacy()
   const v1data = s3_transform()
   await s4_roundtrip(v1data)
   await s5_v2_to_v3()
+  await s6_import_tolerance()
   if (db.isOpen()) db.close()
   console.log(`\n${exitCode === 0 ? 'TOUS LES TESTS PASSENT' : 'ÉCHECS DÉTECTÉS'}`)
   process.exit(exitCode)

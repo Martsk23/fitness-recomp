@@ -15,11 +15,20 @@ export async function loadExpenditure(date = todayKey()) {
   return row ? row.kcal : null
 }
 
-/** Upsert de la dépense du jour (kcal = entier ≥ 0). */
+/**
+ * Upsert de la dépense du jour (kcal = entier ≥ 0).
+ * ATOMIQUE : la lecture + l'écriture s'exécutent dans une seule transaction rw.
+ * IndexedDB sérialise les transactions rw de même scope → deux setExpenditure
+ * concurrents sur la même date ne peuvent pas faire chacun un `add` (le 2ᵉ voit
+ * la ligne du 1ᵉʳ → update). L'index unique `&date` (db.js) est le backstop dur :
+ * un doublon échouerait bruyamment au lieu de passer silencieusement.
+ */
 export async function setExpenditure(kcal, date = todayKey()) {
-  const existing = await db.dailyExpenditure.where('date').equals(date).first()
-  if (existing) await db.dailyExpenditure.put(touch({ ...existing, kcal }))
-  else await db.dailyExpenditure.add(newRow({ date, kcal }))
+  await db.transaction('rw', db.dailyExpenditure, async () => {
+    const existing = await db.dailyExpenditure.where('date').equals(date).first()
+    if (existing) await db.dailyExpenditure.put(touch({ ...existing, kcal }))
+    else await db.dailyExpenditure.add(newRow({ date, kcal }))
+  })
 }
 
 /** Efface la dépense du jour → revient à « non saisi » (suppression de la ligne). */

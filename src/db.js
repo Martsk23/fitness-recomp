@@ -41,7 +41,10 @@ db.version(DEXIE_VERSION).stores({
 // tels quels par Dexie ; seul le nouveau store est créé. Aucune base v2 n'est
 // wipée (cf. migrate.js : wipe réservé à v1).
 db.version(DEXIE_VERSION).stores({
-  dailyExpenditure: 'id, date',
+  // `&date` = index UNIQUE : verrou structurel « 1 ligne par date » (un
+  // double-write ne peut pas créer de doublon ; l'upsert reste atomique côté
+  // expenditure.js). Store neuf en v3 → on déclare la contrainte directement.
+  dailyExpenditure: 'id, &date',
 })
 
 // Source unique de vérité pour l'export/import. Garder synchronisé avec stores().
