@@ -1,0 +1,154 @@
+import { useEffect, useRef, useState } from 'react'
+import { Download, Upload, ShieldCheck, HardDrive, Database } from 'lucide-react'
+import { TABLES } from '../db.js'
+import { downloadBackup, importBundle, parseBackupFile, tableCounts } from '../lib/backup.js'
+import { requestPersistentStorage, storageEstimate } from '../lib/storage.js'
+import { C, num } from '../ui.js'
+
+const fmtBytes = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} Ko` : `${(b / 1024 / 1024).toFixed(1)} Mo`)
+
+export default function Data() {
+  const [counts, setCounts] = useState(null)
+  const [persisted, setPersisted] = useState(null)
+  const [estimate, setEstimate] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const fileRef = useRef(null)
+
+  const refresh = async () => {
+    setCounts(await tableCounts())
+    setEstimate(await storageEstimate())
+  }
+
+  useEffect(() => {
+    ;(async () => {
+      await refresh()
+      setPersisted(Boolean(await navigator.storage?.persisted?.()))
+    })()
+  }, [])
+
+  const onPersist = async () => {
+    const r = await requestPersistentStorage()
+    setPersisted(r.persisted)
+    setMsg(
+      r.persisted
+        ? { ok: true, text: 'Stockage persistant accordé.' }
+        : { ok: false, text: "iOS n'a pas (encore) accordé la persistance — les données restent en local." },
+    )
+  }
+
+  const onImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const bundle = await parseBackupFile(file)
+      await importBundle(bundle, { replace: true })
+      await refresh()
+      setMsg({ ok: true, text: `Restauration OK (${bundle.exportedAt?.slice(0, 10) || 'sauvegarde'}).` })
+    } catch (err) {
+      setMsg({ ok: false, text: `Échec import : ${err.message}` })
+    } finally {
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const totalRows = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0
+
+  return (
+    <div className="px-5 pb-6 pt-1 space-y-4">
+      <h2 className="text-[15px] font-semibold flex items-center gap-2">
+        <Database size={16} style={{ color: C.energy }} /> Données &amp; sauvegarde
+      </h2>
+
+      {msg && (
+        <div
+          className="rounded-xl p-3 text-[12.5px]"
+          style={{
+            background: msg.ok ? 'rgba(190,242,100,0.08)' : 'rgba(251,113,133,0.08)',
+            color: msg.ok ? C.energy : C.warn,
+          }}
+        >
+          {msg.text}
+        </div>
+      )}
+
+      {/* Sauvegarde / restauration */}
+      <div className="rounded-2xl p-4 border space-y-3" style={{ background: C.surface, borderColor: C.line }}>
+        <button
+          onClick={async () => {
+            await downloadBackup()
+            setMsg({ ok: true, text: 'Export JSON généré.' })
+          }}
+          className="w-full flex items-center justify-center gap-2 text-[13px] font-semibold py-3 rounded-xl active:scale-[0.98] transition"
+          style={{ background: C.energy, color: C.bg }}
+        >
+          <Download size={16} /> Exporter (JSON complet)
+        </button>
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="w-full flex items-center justify-center gap-2 text-[13px] font-semibold py-3 rounded-xl border active:scale-[0.98] transition"
+          style={{ borderColor: C.line, color: C.text }}
+        >
+          <Upload size={16} /> Importer / restaurer
+        </button>
+        <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} className="hidden" />
+        <p className="text-[11.5px]" style={{ color: C.faint }}>
+          L'import <b>remplace</b> intégralement les données actuelles.
+        </p>
+      </div>
+
+      {/* Persistance */}
+      <div className="rounded-2xl p-4 border space-y-3" style={{ background: C.surface, borderColor: C.line }}>
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-2 text-[13px] font-medium">
+            <ShieldCheck size={16} style={{ color: persisted ? C.energy : C.faint }} /> Stockage persistant
+          </span>
+          <span
+            className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+            style={{
+              color: persisted ? C.energy : C.muted,
+              background: persisted ? 'rgba(190,242,100,0.1)' : C.surfaceHi,
+            }}
+          >
+            {persisted === null ? '…' : persisted ? 'Accordé' : 'Non accordé'}
+          </span>
+        </div>
+        {!persisted && (
+          <button
+            onClick={onPersist}
+            className="w-full text-[12.5px] font-medium py-2.5 rounded-xl border active:scale-[0.98] transition"
+            style={{ borderColor: C.line, color: C.protein }}
+          >
+            Demander la persistance
+          </button>
+        )}
+        {estimate && (
+          <div className="flex items-center gap-2 text-[12px]" style={{ color: C.muted }}>
+            <HardDrive size={13} />
+            <span style={num}>{fmtBytes(estimate.usage)}</span> utilisés
+            {estimate.quota > 0 && <span style={{ color: C.faint }}>· quota ≈ {fmtBytes(estimate.quota)}</span>}
+          </div>
+        )}
+      </div>
+
+      {/* État de la base (preuve de persistance) */}
+      <div className="rounded-2xl p-4 border" style={{ background: C.surface, borderColor: C.line }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+            Contenu de la base
+          </span>
+          <span style={num} className="text-[12px] font-semibold">
+            {totalRows} lignes
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {TABLES.map((t) => (
+            <div key={t} className="flex items-center justify-between text-[12px]">
+              <span style={{ color: C.muted }}>{t}</span>
+              <span style={{ ...num, color: C.text }}>{counts ? counts[t] : '…'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
