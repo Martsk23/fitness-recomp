@@ -11,11 +11,16 @@ Coquille installable iOS, hors-ligne, qui ne perd pas ses données + sauvegarde/
 - [x] Shell UI (header, tab bar, écran Jour lecture seule, écran Données)
 
 ## Phase 1 — Le quotidien utilisable (priorité absolue)
-But : **utiliser l'app tous les jours.**
-1. Nutrition : bibliothèque d'ingrédients bruts + composition d'un plat par pesée (g) → calcul auto kcal + macros.
-2. Poids : saisie + graphe avec moyenne glissante + guide « bon moment pour se peser ».
-3. Tickers quotidiens (eau par verres, compléments) interactifs avec reset journalier + widget (ex. 5/8).
-4. Bilan énergétique : consommé − dépensé, saisie manuelle rapide de la dépense du jour.
+But : **utiliser l'app tous les jours.** Séquence révisée (cadrage 09/06) :
+
+- [x] **1.0 Migration schéma v2** — PK UUID, `updatedAt` partout, `loggedAt`, base compatible sync futur (voir DECISIONS.md D10-D13). ✅ commitée.
+- [ ] **1.1 Suivi du poids** ← _prochaine_ — saisie kg + date/heure → `weightLogs` ; courbe de tendance + moyenne glissante ; encart « bon moment pour se peser ». Dashboard Jour = poids du jour + tendance.
+- [ ] **2. Profil / onboarding + moteur de calcul métabolique** — dé-seed des cibles perso ; profil (sexe, âge, taille, activité, objectif, %MG?) ; IMC + caveat, BMR (Mifflin-St Jeor / Katch-McArdle), TDEE, cibles selon objectif avec garde-fous (planchers cal/prot/lip, déficit plafonné) ; calibrage TDEE empirique différé.
+- [ ] **3. Tickers interactifs** — cocher/incrémenter sur Jour → `tickerStates` keyé par date (reset auto minuit) ; progression visuelle (5/8).
+- [ ] **4. Bilan énergétique** — consommé − dépensé, saisie manuelle rapide de la dépense du jour.
+- [ ] **Nutrition** (bibliothèque ingrédients bruts /100 g + composition par pesée + base boissons) — attaquée en session dédiée.
+
+_Parké : tracking micronutriments fin (fer/vitD…) → exige une base Ciqual/USDA, phase dédiée._
 
 ## Phase 2 — Intelligence
 5. Intelligence glucidique : IG bas (énergie stable) vs haut (autour des entraînements), sucres simples < 20 g/j, barres de composition, alertes contextuelles selon timing/activité.

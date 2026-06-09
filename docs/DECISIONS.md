@@ -34,3 +34,29 @@ Le tableau `TABLES` dans `src/db.js` pilote export, import et comptage.
 
 ## D9 — Emplacement repo : `~/projects/fitness-recomp` (WSL natif)
 **Pourquoi** : I/O npm/vite nettement plus rapides qu'en `/mnt/c`. Accès Windows si besoin via `\\wsl$`.
+
+---
+_Cadrage « local-first + sync futur » (Tâche 1.0). On reste 100 % local / hors-ligne / zéro backend aujourd'hui ; on rend seulement le schéma compatible avec un sync multi-appareils futur (voie C), pendant que la base est quasi vide. Le sync n'est PAS construit._
+
+## D10 — Clés primaires en UUID (`crypto.randomUUID()`) sur toutes les tables
+PK = `id` string UUID, assigné par l'app à l'insert (plus d'auto-incrément `++id`).
+**Pourquoi** : éviter les collisions d'ID au merge multi-appareils quand le sync arrivera ; bonus immédiat → supprime tout remapping d'ID à l'import. `crypto.randomUUID()` exige un secure context (OK en HTTPS / localhost). Tombstones / soft-delete : **différés** à la phase sync.
+
+### D10-bis — `settings` : clé sentinelle fixe `'singleton'` (pas un UUID aléatoire)
+**Pourquoi** : `settings` est un singleton ; une clé connue et stable permet un `db.settings.get('singleton')` déterministe. Satisfait « PK string » sans casser la lecture.
+
+### D10-ter — FK orpheline (chemin import) : drop + log + comptage
+Une ligne référençante dont le parent est introuvable (après remap) est **supprimée**, loggée, et le total est remonté à l'UI.
+**Pourquoi** : un pointeur mort est pire qu'une absence ; mieux vaut une perte visible (comptée) qu'une FK cassée silencieuse.
+
+## D11 — Champ `updatedAt` (epoch ms) sur chaque enregistrement
+Estampillé à chaque write applicatif via les helpers `newRow()` / `touch()` (`src/db.js`) — **pas** via un hook Dexie global.
+**Pourquoi** : socle d'un merge « last-write-wins » futur. Le choix « helper, pas hook » est délibéré : **l'import doit préserver l'`updatedAt` du fichier** (un hook global le réécrirait à `now` au `bulkPut`, détruisant l'horodatage source nécessaire au merge).
+
+## D12 — Champ `loggedAt` sur `journalEntries`
+Heure réelle du repas (epoch ms), défaut = `createdAt`, éditable plus tard.
+**Pourquoi** : nécessaire à l'intelligence glucidique (timing) et au chat repas à venir ; gratuit à ajouter à vide maintenant, vraie migration plus tard.
+
+## D13 — Migration v1→v2 LIVE = WIPE + RESEED (pas de transform destructif)
+Au boot, si une base v1 (PK auto-incrément) est détectée : **backup durable automatique** (IndexedDB séparée `fitnessRecompBackups`) **avant** tout delete → `Dexie.delete` → `db.open()` recrée une base v2 propre → reseed.
+**Pourquoi** : (1) Dexie interdit le changement de PK en place (`UpgradeError: Not yet support for changing primary key`) → il faut recréer le store ; (2) mes données live = seed + tests, **jetables** ; le backup couvre le risque. Détection via **ouverture dynamique** Dexie (`probe.verno`), pas via un schéma v1 déclaré (ne lève pas de VersionError fiable). `transformV1toV2()` (remap FK parents→enfants) existe et est testé mais sert **uniquement à l'import de backups v1**, jamais en destructif sur la base live.

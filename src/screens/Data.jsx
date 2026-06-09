@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, ShieldCheck, HardDrive, Database } from 'lucide-react'
+import { Download, Upload, ShieldCheck, HardDrive, Database, Archive } from 'lucide-react'
 import { TABLES } from '../db.js'
-import { downloadBackup, importBundle, parseBackupFile, tableCounts } from '../lib/backup.js'
+import { downloadBackup, importBundle, parseBackupFile, tableCounts, triggerDownload } from '../lib/backup.js'
+import { getMigrationBackups } from '../lib/migrate.js'
 import { requestPersistentStorage, storageEstimate } from '../lib/storage.js'
 import { C, num } from '../ui.js'
 
@@ -11,12 +12,14 @@ export default function Data() {
   const [counts, setCounts] = useState(null)
   const [persisted, setPersisted] = useState(null)
   const [estimate, setEstimate] = useState(null)
+  const [backups, setBackups] = useState([])
   const [msg, setMsg] = useState(null)
   const fileRef = useRef(null)
 
   const refresh = async () => {
     setCounts(await tableCounts())
     setEstimate(await storageEstimate())
+    setBackups(await getMigrationBackups())
   }
 
   useEffect(() => {
@@ -41,9 +44,10 @@ export default function Data() {
     if (!file) return
     try {
       const bundle = await parseBackupFile(file)
-      await importBundle(bundle, { replace: true })
+      const { droppedTotal } = await importBundle(bundle, { replace: true })
       await refresh()
-      setMsg({ ok: true, text: `Restauration OK (${bundle.exportedAt?.slice(0, 10) || 'sauvegarde'}).` })
+      const suffix = droppedTotal > 0 ? ` · ${droppedTotal} ligne(s) orpheline(s) ignorée(s)` : ''
+      setMsg({ ok: true, text: `Restauration OK (${bundle.exportedAt?.slice(0, 10) || 'sauvegarde'})${suffix}.` })
     } catch (err) {
       setMsg({ ok: false, text: `Échec import : ${err.message}` })
     } finally {
@@ -95,6 +99,38 @@ export default function Data() {
           L'import <b>remplace</b> intégralement les données actuelles.
         </p>
       </div>
+
+      {/* Backups de migration (créés automatiquement avant un wipe v1→v2) */}
+      {backups.length > 0 && (
+        <div className="rounded-2xl p-4 border space-y-2" style={{ background: C.surface, borderColor: C.line }}>
+          <div className="flex items-center gap-2 text-[13px] font-medium">
+            <Archive size={16} style={{ color: C.carb }} /> Backups de migration
+          </div>
+          <p className="text-[11.5px]" style={{ color: C.faint }}>
+            Sauvegarde automatique de l'ancienne base avant migration. Récupère-la en JSON.
+          </p>
+          {backups.map((b) => (
+            <button
+              key={b.id}
+              onClick={() =>
+                triggerDownload(
+                  JSON.stringify(b.payload, null, 2),
+                  `fitness-recomp-migration-v${b.payload.schemaVersion}.json`,
+                )
+              }
+              className="w-full flex items-center justify-between text-[12px] py-2 px-2 rounded-lg border active:scale-[0.98] transition"
+              style={{ borderColor: C.line, color: C.text }}
+            >
+              <span style={{ color: C.muted }}>
+                v{b.payload.schemaVersion} · {new Date(b.createdAt).toLocaleString('fr-FR')}
+              </span>
+              <span className="flex items-center gap-1" style={{ color: C.carb }}>
+                <Download size={13} /> JSON
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Persistance */}
       <div className="rounded-2xl p-4 border space-y-3" style={{ background: C.surface, borderColor: C.line }}>
