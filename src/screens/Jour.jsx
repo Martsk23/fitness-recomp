@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Sun, TrendingDown } from 'lucide-react'
-import { db } from '../db.js'
+import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
 
 // Phase 0 : tableau de bord en lecture seule, alimenté par Dexie.
@@ -13,7 +13,7 @@ export default function Jour() {
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const s = await db.settings.get(1)
+      const s = await db.settings.get(SETTINGS_KEY)
       const entries = await db.journalEntries.where('date').equals(todayKey()).toArray()
       if (!alive) return
       const agg = entries.reduce(
