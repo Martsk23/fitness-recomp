@@ -1,0 +1,3 @@
+# SPA fallback — app mono-page, garde les navigations directes saines.
+# Les fichiers existants (sw.js, manifest, /assets/*) ont la priorité.
+/*  /index.html  200

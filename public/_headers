@@ -1,0 +1,8 @@
+# Le service worker et l'index ne doivent pas être mis en cache par le CDN,
+# sinon les mises à jour (registerType: autoUpdate) ne se propagent pas.
+/sw.js
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/registerSW.js
+  Cache-Control: no-cache
