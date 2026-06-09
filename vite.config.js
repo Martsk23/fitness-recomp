@@ -14,7 +14,10 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // false (PAS 'auto') : on importe registerSW de 'virtual:pwa-register' et on
+      // l'appelle nous-mêmes dans main.jsx (auto-reload contrôlé + update-on-focus).
+      // 'auto' injecterait EN PLUS un <script> registerSW.js → SW enregistré 2×.
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Fitness Recomp',
@@ -37,6 +40,12 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // App-shell offline: SPA fallback to index.html for navigations.
         navigateFallback: '/index.html',
+        // Explicites (autoUpdate les force déjà, on les rend visibles + verrouillés) :
+        // un nouveau SW s'active immédiatement (skipWaiting) et prend le contrôle des
+        // pages déjà ouvertes (clientsClaim) → un déploiement remplace bien le build
+        // de la PWA installée, sans manip manuelle.
+        skipWaiting: true,
+        clientsClaim: true,
       },
       // Lets us test the PWA / service worker in `npm run dev`.
       devOptions: { enabled: true },

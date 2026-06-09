@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { registerSW } from 'virtual:pwa-register'
 import './index.css'
 import App from './App.jsx'
 import { db } from './db.js'
@@ -28,3 +29,24 @@ async function boot() {
 }
 
 boot()
+
+// ── Service worker : auto-update SANS arracher la page en pleine saisie ────
+// registerType 'autoUpdate' (vite.config) → un nouveau SW fait skipWaiting +
+// clientsClaim, et la page se recharge quand il prend le contrôle. Sans ça, la
+// PWA iOS installée resservait l'ancien bundle précaché (bug nutrition invisible).
+//
+// CONTRÔLE DU TIMING : on ne met AUCUN timer d'update (qui pourrait recharger en
+// pleine compo). On ne vérifie un nouveau build qu'au RETOUR de focus/visibilité
+// → le reload tombe au moment où l'utilisateur revient dans l'app, jamais pendant
+// qu'il saisit. `immediate: true` enregistre sans attendre window.load.
+registerSW({
+  immediate: true,
+  onRegisteredSW(_swScriptUrl, registration) {
+    if (!registration) return
+    document.addEventListener('visibilitychange', () => {
+      // Au retour au premier plan : on tire le sw.js. S'il a changé (déploiement),
+      // le nouveau SW s'active et la page se recharge ; sinon rien (pas de reload).
+      if (document.visibilityState === 'visible') registration.update()
+    })
+  },
+})
