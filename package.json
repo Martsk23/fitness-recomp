@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node tests/migration.test.mjs && node tests/weight.test.mjs && node tests/metabolic.test.mjs && node tests/tickers.test.mjs && node tests/expenditure.test.mjs && node tests/intake.test.mjs",
+    "test": "node tests/migration.test.mjs && node tests/weight.test.mjs && node tests/metabolic.test.mjs && node tests/tickers.test.mjs && node tests/expenditure.test.mjs && node tests/intake.test.mjs && node tests/nutrition.test.mjs",
     "smoke": "playwright test"
   },
   "dependencies": {

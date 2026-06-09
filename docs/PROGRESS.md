@@ -71,15 +71,29 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 - **Contrainte dure (table + export/import même tâche)** : `db.js` **`DEXIE_VERSION 3→4`** montée **ADDITIVE** (nouveau store, index unique `&date`) + ajout à `TABLES`. **`SCHEMA_VERSION` gardé à 2** (rétro-compat import). `backup.js` **inchangé** (piloté par `TABLES`, D7).
 - Décision actée : **D17** (consommé rapide en table dédiée + réconciliation nutrition **provisoire/déférée** ; verrou nullish). Voir DECISIONS.md.
 
-**Vérifs** : `tests/intake.test.mjs` ✅ (effectiveConsumed + **verrou nullish 0≠absence** ; scénario bilan pas-de-total/2100/clear ; upsert/absence/clear ; double-write concurrent → 1 ligne) · `migration.test.mjs` **S7** ✅ (base v3 réelle → bump v4 → **données préservées**, `dailyIntake` vide, 0 backup wipe) · smoke Playwright **consommé rapide** ✅ (2100 → bilan −400, persistance reload, 1 ligne/date, macros « non renseigné », effacer → rouvre la saisie) · suites migration/weight/metabolic/tickers/expenditure **restent vertes** (5/5 smoke) · `npm run lint`/`build` ✅. **Commit : _en attente du GO_.**
+**Vérifs** : `tests/intake.test.mjs` ✅ (effectiveConsumed + **verrou nullish 0≠absence** ; scénario bilan pas-de-total/2100/clear ; upsert/absence/clear ; double-write concurrent → 1 ligne) · `migration.test.mjs` **S7** ✅ (base v3 réelle → bump v4 → **données préservées**, `dailyIntake` vide, 0 backup wipe) · smoke Playwright **consommé rapide** ✅ (2100 → bilan −400, persistance reload, 1 ligne/date, macros « non renseigné », effacer → rouvre la saisie) · suites migration/weight/metabolic/tickers/expenditure **restent vertes** (5/5 smoke) · `npm run lint`/`build` ✅. **Commit `59eef78`** (+ `1b8cc25` chore test auto-deploy Netlify).
 
-_MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + Tâche 4 bilan énergétique (8739e19 + harden ae947ae) + **Tâche 4.5 consommé rapide (D17, commit en attente)** faits, validés. **Quotidien utilisable bouclé + saisie kcal du jour en 2 s ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
+### Tâche 5 — Nutrition (clôt la Phase 1) (session du 09/06/2026)
+- `src/data/ingredientsSeed.js` : **58 ingrédients bruts /100 g** validés (féculents/protéines/légumes/matières grasses + **3 nouvelles catégories** fruits/laitages/aromates), `_meta` documentaire exclu, **ids slug stables** (déterministes, mieux que UUID aléatoires pour de la donnée de référence).
+- `src/lib/nutrition.js` (logique pure + I/O, testable node) : `lineMacros`/`composeTotals` (valeur = /100 g × g ÷ 100, kcal entier, macros 0,1 g), `regramMacros` (**rescale le SNAPSHOT, jamais relire l'ingrédient** → D1), `validateIngredient` (**sucres ⊂ glucides**, IG 3 niveaux D5, ≥ 0), `distinctCategories` (connues d'abord puis custom en alpha → **filtres dynamiques**), CRUD ingrédient, `saveMeal` (**1 `journalEntry`/ligne, macros figées D1, sourceType ingredient D2, gi copié, UUID/updatedAt/loggedAt** — transaction rw), `loadDayEntries`/`updateEntryGrams`/`deleteEntry`.
+- `src/screens/Bouffe.jsx` (onglet `bouffe`, ex-Placeholder) : 3 sous-vues — **Composer** (select groupé par catégorie + grammes → lignes empilées → total live → enregistrer), **Journal** du jour (regrammage/suppression), **Bibliothèque** (recherche `name` + filtres catégorie dynamiques + ajout/édition/suppression). `App.jsx` câblé.
+- `src/seed.js` : `seedLibraryIfNeeded()` **gardé par le flag `settings.librarySeededV1`** (part sur device **déjà initialisé**, idempotent, **indépendant de l'import** car le flag voyage dans `settings`) ; `main.jsx` l'appelle au boot après `seedIfEmpty()`.
+- **Schéma INCHANGÉ — zéro bump Dexie** (`DEXIE_VERSION` reste 4, `SCHEMA_VERSION` reste 2) : les stores `ingredients`/`journalEntries`/`drinks` existent depuis v2, leurs index (name/category/date) suffisent, les valeurs /100 g et snapshots sont **non indexés** → écriture libre. `backup.js` **intouché** (3 tables déjà dans `TABLES`, D7). D16/D17 ne s'appliquent pas (aucun nouveau store).
+- **Côté « consommé » du Jour s'allume seul** depuis `journalEntries` (déjà câblé, Tâche 4/4.5) — sauf total manuel D17 (prime).
+- **Hors périmètre (déféré)** : boissons (~38 alcoolisées) — table `drinks` en place, `sourceType:'drink'` non utilisé ; intelligence glucidique (barres/alertes IG) = Phase 2 (on capte juste `sugarsSimple100`+`gi`) ; recettes récurrentes ; couche IA.
+- Décision actée : **D18** (nutrition zéro-bump + seed flag + ids slug + regram-from-snapshot + boissons déférées). Voir DECISIONS.md.
+
+**Hardening (pré-commit)** : (2) audit ids slug ↔ `sourceId`/lookups/export-import/migrate → **tous agnostiques au format**, aucune hypothèse UUID en prod (rien à corriger) ; (3) `seedLibraryIfNeeded` durci **ceinture+bretelles** — n'insère QUE les ids slug manquants (l'id slug ÉTANT la PK) → un re-run sur flag sauté ne peut **ni dupliquer ni throw ConstraintError** (boot survit) et **n'écrase jamais un ingrédient édité** (pas de `bulkPut`) ; (4) validation confirmée **à l'édition aussi** (`updateIngredient`), pas que création ; (1) comptage seed re-vérifié = 8/8/8/5/18/6/5 (narration « 7/19 » erronée, **fichier correct**).
+
+**Vérifs** : `tests/nutrition.test.mjs` ✅ (calcul portion exact ; totaux ; regram ÷2 **sur snapshot, ingrédient supprimé** ; validation sucres>glucides/IG/négatifs **création + édition** ; catégories dynamiques ; `saveMeal` → N entrées figées D1/D2/D5/D10-D12 ; **seed via flag** → 58 ing., idempotent, **biblio vidée + flag ⇒ pas de re-seed** ; **misfire flag → 0 doublon, 0 throw, édition préservée**) · smoke Playwright **7/7** ✅ — **nutrition** (seed 58 + flag au boot → plat poulet 200 g = **240 kcal** → **Journal conservé après reload** → **« 240 mangé » au Jour**) + **bibliothèque CRUD rendu réel** (créer → visible → éditer → supprimer) ; 5 smokes antérieurs **restent verts** · suites migration/weight/metabolic/tickers/expenditure/intake **restent vertes** (7 suites node) · `npm run lint`/`build` ✅. **Commit : _en attente du GO_.**
+
+_MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + Tâche 4 bilan énergétique (8739e19 + harden ae947ae) + Tâche 4.5 consommé rapide (D17, **59eef78**) + **Tâche 5 Nutrition (D18, commit en attente)** faits, validés. **PHASE 1 BOUCLÉE — le quotidien utilisable est complet (poids, profil, tickers, bilan, saisie kcal 2 s, nutrition par pesée). Prochain = Phase 2 (intelligence glucidique).**_
 
 ## En cours
-- (rien) — Tâche 4.5 close (commit en attente du GO) ; reste la Nutrition (gros chantier dédié) pour clore la Phase 1.
+- (rien) — **Phase 1 close**. Tâche 5 Nutrition validée (commit en attente du GO).
 
 ## PROCHAINE ACTION CONCRÈTE
-> **NUTRITION** (gros chantier, à attaquer en **discussion dédiée** — voir section dédiée plus bas). Bibliothèque d'ingrédients bruts /100 g + composition d'un plat par pesée → `journalEntries` (macros figées, D1) + migration des ~38 boissons. **Une fois la nutrition là, le côté « consommé » du bilan (Tâche 4) s'allume seul** (déjà câblé sur `journalEntries`). **Ne rien coder de nutrition hors de cette discussion dédiée.**
+> **Phase 2 — Intelligence glucidique** (barres de composition IG bas/haut, alertes selon timing/activité, sucres < 20 g/j déjà capté) — voir ROADMAP. Données déjà en base (`gi`, `sugarsSimple` figés sur chaque entrée). **À part : boissons déférées** (~38 alcoolisées à recréer — sous-tâche dédiée, table `drinks` prête, `sourceType:'drink'`).
 
 ## À faire — séquence (validation entre chaque)
 1. ~~**1.0 Migration v2**~~ ✅ commitée (befd12a).
@@ -88,7 +102,9 @@ _MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (09
 4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (de0dc89).
 5. ~~**Tâche 3 Tickers interactifs**~~ ✅ commitée (6406954).
 6. ~~**Tâche 4 Bilan énergétique**~~ ✅ commitée (8739e19 + harden ae947ae).
-7. **Nutrition** — _prochaine action_ ci-dessus. **Discussion dédiée — clôt la Phase 1.**
+7. ~~**Tâche 4.5 Consommé rapide**~~ ✅ commitée (59eef78).
+8. ~~**Tâche 5 Nutrition**~~ ✅ (D18, commit en attente du GO) — **clôt la Phase 1**.
+9. **Phase 2** — intelligence glucidique, puis import CSV Strong, analyse perf. _+ boissons déférées (sous-tâche)._
 
 ## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
 **Après** les tickers. À attaquer dans une **discussion neuve** :

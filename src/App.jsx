@@ -7,6 +7,7 @@ import Jour from './screens/Jour.jsx'
 import Data from './screens/Data.jsx'
 import Poids from './screens/Poids.jsx'
 import Profil from './screens/Profil.jsx'
+import Bouffe from './screens/Bouffe.jsx'
 
 export default function App() {
   const [tab, setTab] = useState('jour')
@@ -74,7 +75,8 @@ export default function App() {
           {tab === 'jour' && <Jour />}
           {tab === 'data' && <Data />}
           {tab === 'poids' && <Poids />}
-          {tab !== 'jour' && tab !== 'data' && tab !== 'poids' && <Placeholder tab={tab} />}
+          {tab === 'bouffe' && <Bouffe />}
+          {tab !== 'jour' && tab !== 'data' && tab !== 'poids' && tab !== 'bouffe' && <Placeholder tab={tab} />}
         </div>
 
         {/* ── Tab bar ─────────────────────────────────────────────── */}
@@ -107,8 +109,8 @@ function Shell({ children }) {
   )
 }
 
-const LABELS = { bouffe: 'Bibliothèque & journal', poids: 'Suivi du poids', perf: 'Performances', chat: 'Chat repas' }
-const PHASES = { bouffe: 1, poids: 1, perf: 2, chat: 3 }
+const LABELS = { perf: 'Performances', chat: 'Chat repas' }
+const PHASES = { perf: 2, chat: 3 }
 
 function Placeholder({ tab }) {
   return (

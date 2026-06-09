@@ -251,6 +251,108 @@ test('consommé rapide : total manuel saisi → bilan, persistance, 1 ligne/date
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('nutrition : seed parti via flag, plat pesé → kcal/macros corrects → reload → entrée conservée → consommé du Jour allumé', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Le seed bibliothèque est parti au boot via le flag librarySeededV1 (DB fraîche
+  // → settings créé par seedIfEmpty, puis seedLibraryIfNeeded pose le flag + 58 ing.).
+  const seed = await page.evaluate(async () => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const count = await new Promise((res, rej) => {
+      const req = idb.transaction('ingredients', 'readonly').objectStore('ingredients').count()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    const settings = await new Promise((res, rej) => {
+      const req = idb.transaction('settings', 'readonly').objectStore('settings').get('singleton')
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    idb.close()
+    return { count, flag: settings?.librarySeededV1 }
+  })
+  expect(seed.count).toBe(58)
+  expect(seed.flag).toBe(true)
+
+  // Onglet Bouffe → vue Composer (par défaut). Compose un plat pesé.
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('blanc-poulet-cru')
+  await page.getByLabel('Grammes').fill('200')
+  await page.getByLabel('Ajouter au plat').click()
+
+  // Total live : 200 g de blanc de poulet (120 kcal/100 g) → 240 kcal.
+  await expect(page.getByTestId('meal-total-kcal')).toHaveText('240')
+
+  // Enregistre → bascule sur le Journal du jour. On attend d'abord le démontage du
+  // composeur (le <select> contient un <option> homonyme du repas → sinon course).
+  await page.getByRole('button', { name: 'Enregistrer le repas' }).click()
+  await expect(page.getByLabel('Choisir un ingrédient')).toHaveCount(0)
+  await expect(page.getByText('Blanc de poulet (cru)')).toBeVisible()
+  await expect(page.getByText(/200 g · 240 kcal/)).toBeVisible()
+
+  // Persistance réelle : reload → l'entrée du journal est conservée (IndexedDB).
+  await page.reload()
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByRole('button', { name: 'Journal' }).click()
+  await expect(page.getByText('Blanc de poulet (cru)')).toBeVisible()
+  await expect(page.getByText(/200 g · 240 kcal/)).toBeVisible()
+
+  // Le consommé du Jour s'allume SEUL depuis journalEntries (aucun total manuel).
+  await page.getByRole('button', { name: 'Jour', exact: true }).click()
+  await expect(page.getByText('240 mangé')).toBeVisible()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
+test('nutrition bibliothèque : créer un ingrédient → visible → éditer → supprimer (rendu réel)', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByRole('button', { name: 'Bibliothèque' }).click()
+
+  // Créer : ouvrir le formulaire, remplir les valeurs /100 g, ajouter.
+  await page.getByRole('button', { name: 'Ajouter un ingrédient' }).click()
+  await page.getByLabel("Nom de l'ingrédient").fill('Ztest Aliment')
+  await page.getByLabel('Catégorie').selectOption('protéines')
+  await page.getByLabel('Index glycémique').selectOption('low')
+  await page.getByLabel('Valeur kcal pour 100 g').fill('200')
+  await page.getByLabel('Valeur P pour 100 g').fill('20')
+  await page.getByLabel('Valeur G pour 100 g').fill('10')
+  await page.getByLabel('Valeur sucr. pour 100 g').fill('2')
+  await page.getByLabel('Valeur L pour 100 g').fill('5')
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click()
+
+  // Visible dans la liste avec ses valeurs figées.
+  await expect(page.getByText('Ztest Aliment')).toBeVisible()
+  await expect(page.getByText(/200 kcal · P 20 \/ G 10 \/ L 5/)).toBeVisible()
+
+  // Éditer : changer kcal 200 → 250.
+  await page.getByRole('button', { name: 'Modifier Ztest Aliment' }).click()
+  await page.getByLabel('Valeur kcal pour 100 g').fill('250')
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click()
+  await expect(page.getByText(/250 kcal · P 20 \/ G 10 \/ L 5/)).toBeVisible()
+
+  // Supprimer → disparaît de la liste.
+  await page.getByRole('button', { name: 'Supprimer Ztest Aliment' }).click()
+  await expect(page.getByText('Ztest Aliment')).toHaveCount(0)
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)
