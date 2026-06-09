@@ -48,21 +48,29 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 
 **Vérifs** : `tests/metabolic.test.mjs` ✅ (BMR valeurs connues, multiplicateurs, cibles recomp 2483/160/317/64, **garde-fous qui bloquent** + invariant balayage) · smoke Playwright ✅ (onboarding → cibles calculées 2483 → reload profil persisté) · `tests/migration.test.mjs` assertion reseed adaptée au dé-seed ✅ · `npm run lint`/`build`/`test` ✅. **Commit `c754429`.**
 
-_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) faits, validés, commités. **Tâche 3 tickers : NON commencée.**_
+### Tâche 3 — Tickers interactifs (session du 09/06/2026)
+- `src/lib/tickers.js` (logique extraite, testable node) : `nextValue` (counter `inc`/`dec` borné à 0 / checkbox `toggle`), `clampCounter`, `loadActiveConfigs` (triés par `order`), `loadStates(date)` (map tickerId→valeur, **absence ⇒ 0**), `setValue` (**upsert** sur la clé `(tickerId, date)` : `newRow()` à la 1ʳᵉ écriture du jour, `touch()` ensuite → jamais de doublon ; ligne à 0 conservée plutôt que supprimée — 0 explicite ≡ absence).
+- `src/screens/Jour.jsx` : section **« Routine du jour »** — compteurs (eau) avec − / + (bornage 0, − désactivé à 0, ajout demandé), cases (compléments) en toggle ; progression par ticker (`5 / 8`) + compteur de complétion (`3 / 4`) ; maj **optimiste** puis persistance.
+- **Schéma inchangé** : `tickerStates` déjà en v2 et dans `TABLES` → export/import couvre sans modif `db.js`. Pas de nouvelle décision (D3/D10/D11 appliquées).
+- **Tickers figés** (les 4 seedés) : ajout/retrait/cible/ordre par l'utilisateur **différé** → tranche future au ROADMAP.
+
+**Vérifs** : `tests/tickers.test.mjs` ✅ (nextValue/clamp purs ; upsert sans doublon ; **« autre date repart à 0 »** prouvé en base) — branché dans `npm test` (migration/weight/metabolic **restent verts**) · smoke Playwright ✅ (0 → +3 → −1 → clamp 0 → 2 + Créatine cochée → **reload : état du jour conservé** ; injection d'une ligne d'hier qui ne remonte pas aujourd'hui) · `npm run lint`/`build` ✅. **Commit `738582e`.**
+
+_MAJ 09/06/2026 — Phase 0 + 1.0 (939dd7f) + fix Jour (9a0c3be) + 1.1 poids (f0556fb) + Tâche 2 profil/métabolique (c754429) + Tâche 3 tickers (738582e) faits, validés, commités. **Tâche 4 bilan énergétique : NON commencée.**_
 
 ## En cours
-- (rien) — Tâche 2 close ; tickers à faire.
+- (rien) — Tâche 3 close ; bilan énergétique à faire.
 
 ## PROCHAINE ACTION CONCRÈTE
-> **Tâche 3 — Tickers interactifs** : cocher/incrémenter sur l'écran Jour → écrit `tickerStates` keyé par `(tickerId, date)` ; **absence de ligne = 0** (reset auto minuit, D3, **pas de cron**) ; progression visuelle (ex. 5/8). Écritures via `newRow()`/`touch()`. Smoke attendu : cocher → reload → état du jour conservé ; date différente → repart à 0.
+> **Tâche 4 — Bilan énergétique** : consommé − dépensé sur l'écran Jour, avec **saisie manuelle rapide de la dépense du jour** (pas de HealthKit, D du cahier des charges). Décider où stocker la dépense (champ `settings` du jour ? table dédiée ?) → si nouvelle table/champ, mettre à jour `TABLES` + export/import **dans la même tâche** (contrainte dure).
 
 ## À faire — séquence (validation entre chaque)
 1. ~~**1.0 Migration v2**~~ ✅ commitée (939dd7f).
 2. ~~**fix écran Jour blanc**~~ ✅ + smoke Playwright committé (9a0c3be).
 3. ~~**1.1 Suivi du poids**~~ ✅ commitée (f0556fb).
 4. ~~**Tâche 2 Profil / moteur métabolique**~~ ✅ commitée (c754429).
-5. **Tâche 3 Tickers interactifs** — _prochaine action_ ci-dessus. **Pas commencée.**
-6. **Tâche 4 Bilan énergétique** — consommé − dépensé, saisie manuelle rapide de la dépense. Pas commencée.
+5. ~~**Tâche 3 Tickers interactifs**~~ ✅ commitée (738582e).
+6. **Tâche 4 Bilan énergétique** — _prochaine action_ ci-dessus. **Pas commencée.**
 
 ## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
 **Après** les tickers. À attaquer dans une **discussion neuve** :

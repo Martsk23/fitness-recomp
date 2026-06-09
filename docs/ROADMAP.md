@@ -16,11 +16,12 @@ But : **utiliser l'app tous les jours.** Séquence révisée (cadrage 09/06) :
 - [x] **1.0 Migration schéma v2** — PK UUID, `updatedAt` partout, `loggedAt`, base compatible sync futur (voir DECISIONS.md D10-D13). ✅ commitée.
 - [x] **1.1 Suivi du poids** ✅ commitée (f0556fb) — saisie kg + date/heure → `weightLogs` ; courbe de tendance + moyenne glissante (trailing 7 points, D14) ; encart « bon moment pour se peser ». Dashboard Jour = poids du jour + tendance. _(Régression écran Jour blanc corrigée au passage + smoke Playwright committé, 9a0c3be.)_
 - [x] **2. Profil / onboarding + moteur de calcul métabolique** ✅ commitée (c754429) — profil (sexe, âge, taille, activité, objectif, %MG?) ; BMR Mifflin-St Jeor / Katch-McArdle, TDEE (5 multiplicateurs), cibles recomp (TDEE×0,90, prot 2,0 g/kg) avec garde-fous codés en dur ; IMC + caveat ; dé-seed des cibles. Calibrage TDEE empirique différé (seam prêt). Voir D15.
-- [ ] **3. Tickers interactifs** ← _prochaine_ — cocher/incrémenter sur Jour → `tickerStates` keyé par date (absence de ligne = 0 → reset auto minuit, **pas de cron**) ; progression visuelle (5/8).
-- [ ] **4. Bilan énergétique** — consommé − dépensé, saisie manuelle rapide de la dépense du jour.
+- [x] **3. Tickers interactifs** ✅ commitée (738582e) — cocher/incrémenter sur Jour → `tickerStates` keyé par date (absence de ligne = 0 → reset auto minuit, **pas de cron**, D3) ; compteurs − / + bornés à 0, cases en toggle ; progression par ticker (5/8) + compteur de complétion. Logique extraite/testée (`src/lib/tickers.js`).
+- [ ] **4. Bilan énergétique** ← _prochaine_ — consommé − dépensé, saisie manuelle rapide de la dépense du jour.
 - [ ] **Nutrition** (bibliothèque ingrédients bruts /100 g + composition par pesée + base boissons) — attaquée en session dédiée.
 
 _Parké : tracking micronutriments fin (fer/vitD…) → exige une base Ciqual/USDA, phase dédiée._
+_Parké : **Tickers configurables** (cahier des charges, volontairement différé) — l'utilisateur ajoute/retire ses propres tickers et règle label / type / cible / ordre / `active` (les 4 actuels sont seedés et figés). Écran de gestion sur `tickerConfigs` (déjà en base, déjà dans `TABLES`) ; touche à `seed.js` (seed conditionnel) et à l'export. Petite tranche dédiée, après le quotidien utilisable._
 
 ## Dette technique
 - **Bundle > 500 kB** (warning au build) à cause de **Recharts**. Optimisation = **lazy-load des écrans à graphes** (Poids, puis Perf en Phase 2) via `React.lazy` / import dynamique, pour sortir Recharts du chunk initial. **À faire plus tard** — pas bloquant pour une app 100 % locale, juste tracé pour ne pas le perdre.
