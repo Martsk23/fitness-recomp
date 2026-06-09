@@ -65,10 +65,18 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 
 **Vérifs** : `tests/expenditure.test.mjs` ✅ (energyBalance ; upsert/absence/clear ; **double-write concurrent → 1 ligne**) · `migration.test.mjs` **S5** ✅ (base v2 réelle → bump v3 → **données préservées**, store vide, 0 backup wipe) + **S6** ✅ (tolérance import : bundle v2 sans la table + table inconnue → pas de throw → justifie SCHEMA_VERSION=2) · smoke Playwright **bilan** ✅ (repas injecté 600 + dépense 2500 → **−1900**, persistance reload, **1 ligne keyée par date**) · suites migration/weight/metabolic/tickers **restent vertes** · `npm run lint`/`build` ✅. **Commits `8739e19` (feat) + `ae947ae` (harden, review).**
 
-_MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + **Tâche 4 bilan énergétique (8739e19 + harden ae947ae)** faits, validés, commités. **Quotidien utilisable bouclé ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
+### Tâche 4.5 — Consommé rapide du jour (session du 09/06/2026)
+- `src/lib/intake.js` (nouveau, testable node) : table dédiée **`dailyIntake`** (`{ id, date, kcal, updatedAt }`, **1 ligne/date, absence = non saisi (null, jamais 0)**) ; `loadIntake`/`setIntake`/`clearIntake` (upsert **atomique** en transaction rw, calque de `expenditure.js`) + **seam unique `effectiveConsumed(manualTotal, journalSum)`** = `manualTotal ?? journalSum` (**verrou nullish** : 0 prime, seul null/undefined retombe sur le journal).
+- `src/screens/Jour.jsx` : la ligne **« Consommé »** du Bilan devient **éditable** (calque exact de la ligne Dépense — tap → input → OK, **saisie 2 s**) ; le total remonte au **héro** (anneau « Restant » + « X mangé ») et au bilan. **Macros P/C/L + sucres affichés « — / non renseigné »** quand le consommé vient du total manuel (pas de faux zéros). Fallback somme du journal conservé (existant smoke bilan reste vert).
+- **Contrainte dure (table + export/import même tâche)** : `db.js` **`DEXIE_VERSION 3→4`** montée **ADDITIVE** (nouveau store, index unique `&date`) + ajout à `TABLES`. **`SCHEMA_VERSION` gardé à 2** (rétro-compat import). `backup.js` **inchangé** (piloté par `TABLES`, D7).
+- Décision actée : **D17** (consommé rapide en table dédiée + réconciliation nutrition **provisoire/déférée** ; verrou nullish). Voir DECISIONS.md.
+
+**Vérifs** : `tests/intake.test.mjs` ✅ (effectiveConsumed + **verrou nullish 0≠absence** ; scénario bilan pas-de-total/2100/clear ; upsert/absence/clear ; double-write concurrent → 1 ligne) · `migration.test.mjs` **S7** ✅ (base v3 réelle → bump v4 → **données préservées**, `dailyIntake` vide, 0 backup wipe) · smoke Playwright **consommé rapide** ✅ (2100 → bilan −400, persistance reload, 1 ligne/date, macros « non renseigné », effacer → rouvre la saisie) · suites migration/weight/metabolic/tickers/expenditure **restent vertes** (5/5 smoke) · `npm run lint`/`build` ✅. **Commit : _en attente du GO_.**
+
+_MAJ 09/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + Tâche 4 bilan énergétique (8739e19 + harden ae947ae) + **Tâche 4.5 consommé rapide (D17, commit en attente)** faits, validés. **Quotidien utilisable bouclé + saisie kcal du jour en 2 s ; reste la Nutrition (gros chantier, discussion dédiée) pour clore la Phase 1.**_
 
 ## En cours
-- (rien) — Tâche 4 close ; reste la Nutrition (gros chantier dédié) pour clore la Phase 1.
+- (rien) — Tâche 4.5 close (commit en attente du GO) ; reste la Nutrition (gros chantier dédié) pour clore la Phase 1.
 
 ## PROCHAINE ACTION CONCRÈTE
 > **NUTRITION** (gros chantier, à attaquer en **discussion dédiée** — voir section dédiée plus bas). Bibliothèque d'ingrédients bruts /100 g + composition d'un plat par pesée → `journalEntries` (macros figées, D1) + migration des ~38 boissons. **Une fois la nutrition là, le côté « consommé » du bilan (Tâche 4) s'allume seul** (déjà câblé sur `journalEntries`). **Ne rien coder de nutrition hors de cette discussion dédiée.**

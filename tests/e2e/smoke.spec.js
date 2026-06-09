@@ -199,6 +199,58 @@ test('bilan énergétique : dépense saisie persistée, consommé − dépensé 
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('consommé rapide : total manuel saisi → bilan, persistance, 1 ligne/date, macros non renseignées', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Saisie du consommé TOTAL du jour (aucun repas injecté → vient du total manuel).
+  await page.getByLabel('Consommé total du jour en kcal').fill('2100')
+  await page.getByRole('button', { name: 'Enregistrer le consommé' }).click()
+  await expect(page.getByTestId('consumed-value')).toHaveText('2100')
+
+  // Macros sans détail (total kcal saisi, pas de compo) → mention "non renseigné".
+  await expect(page.getByText('détail non renseigné')).toBeVisible()
+
+  // Dépense → bilan = consommé 2100 − dépensé 2500 = −400 kcal.
+  await page.getByLabel('Dépense totale du jour en kcal').fill('2500')
+  await page.getByRole('button', { name: 'Enregistrer la dépense' }).click()
+  await expect(page.getByTestId('energy-balance')).toHaveText('-400 kcal')
+
+  // Persistance réelle : reload (IndexedDB) → total + bilan conservés.
+  await page.reload()
+  await expect(page.getByTestId('consumed-value')).toHaveText('2100')
+  await expect(page.getByTestId('energy-balance')).toHaveText('-400 kcal')
+
+  // Une seule ligne dailyIntake, keyée par la date du jour.
+  const tKey = dayKey(new Date())
+  const rows = await page.evaluate(async () => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const all = await new Promise((res, rej) => {
+      const req = idb.transaction('dailyIntake', 'readonly').objectStore('dailyIntake').getAll()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    idb.close()
+    return all
+  })
+  expect(rows.length).toBe(1)
+  expect(rows[0].date).toBe(tKey)
+
+  // Effacer → revient à "non suivi" (champ de saisie rouvert).
+  await page.getByRole('button', { name: 'Effacer le consommé du jour' }).click()
+  await expect(page.getByLabel('Consommé total du jour en kcal')).toBeVisible()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)

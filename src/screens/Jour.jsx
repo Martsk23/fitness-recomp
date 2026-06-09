@@ -5,6 +5,7 @@ import { C, num, todayKey } from '../ui.js'
 import { trend, shouldWeighNow } from '../lib/weight.js'
 import { loadActiveConfigs, loadStates, setValue, nextValue } from '../lib/tickers.js'
 import { loadExpenditure, setExpenditure, clearExpenditure, energyBalance } from '../lib/expenditure.js'
+import { loadIntake, setIntake, clearIntake, effectiveConsumed } from '../lib/intake.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
@@ -15,6 +16,8 @@ export default function Jour() {
   const [consumed, setConsumed] = useState({ kcal: 0, p: 0, c: 0, f: 0, s: 0 })
   const [entryCount, setEntryCount] = useState(0)
   const [weight, setWeight] = useState({ today: null, t: { direction: 'flat', deltaKg: 0 } })
+  // Consommé total saisi à la main : undefined = chargement · null = non saisi · nombre = kcal.
+  const [manualIntake, setManualIntake] = useState(undefined)
 
   useEffect(() => {
     let alive = true
@@ -22,6 +25,7 @@ export default function Jour() {
       const s = await db.settings.get(SETTINGS_KEY)
       const entries = await db.journalEntries.where('date').equals(todayKey()).toArray()
       const logs = await db.weightLogs.orderBy('datetime').toArray()
+      const intake = await loadIntake()
       if (!alive) return
       const todayLogs = logs.filter((l) => l.date === todayKey())
       setWeight({
@@ -41,13 +45,14 @@ export default function Jour() {
       setSettings(s)
       setConsumed(agg)
       setEntryCount(entries.length)
+      setManualIntake(intake)
     })()
     return () => {
       alive = false
     }
   }, [])
 
-  if (!settings) return null
+  if (!settings || manualIntake === undefined) return null
 
   // Fallback propre : tant que le profil n'a pas calculé de cibles, pas de budgets
   // faux ni de NaN. (En pratique l'onboarding gate déjà l'app — ceinture + bretelles.)
@@ -61,8 +66,13 @@ export default function Jour() {
   }
 
   const targetKcal = settings.targetKcal
-  const remaining = Math.round(targetKcal - consumed.kcal)
-  const pct = Math.min(100, (consumed.kcal / targetKcal) * 100)
+  // Consommé effectif : total manuel s'il est saisi, sinon somme du journal
+  // (seam unique D17). Quand il vient du total manuel, le détail macros est
+  // inconnu → affiché « non renseigné » plutôt que des zéros trompeurs.
+  const consumedKcal = effectiveConsumed(manualIntake, consumed.kcal)
+  const consumedFromManual = manualIntake != null
+  const remaining = Math.round(targetKcal - consumedKcal)
+  const pct = Math.min(100, (consumedKcal / targetKcal) * 100)
 
   return (
     <div className="px-5 pb-4">
@@ -82,7 +92,7 @@ export default function Jour() {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-3 text-[12px]" style={{ color: C.muted }}>
-            <span style={num}>{Math.round(consumed.kcal)} mangé</span>
+            <span style={num}>{Math.round(consumedKcal)} mangé</span>
             <span style={{ color: C.line }}>·</span>
             <span style={num} className="flex items-center gap-1">
               <TrendingDown size={12} style={{ color: C.energy }} /> objectif {targetKcal}
@@ -91,12 +101,17 @@ export default function Jour() {
         </div>
       </div>
 
-      {/* Macros */}
+      {/* Macros — « non renseigné » quand le consommé vient du total manuel (pas de détail) */}
       <div className="space-y-3">
-        <MacroBar name="Protéines" v={Math.round(consumed.p)} t={settings.targetProtein} color={C.protein} />
-        <MacroBar name="Glucides" v={Math.round(consumed.c)} t={settings.targetCarb} color={C.carb} />
-        <MacroBar name="Lipides" v={Math.round(consumed.f)} t={settings.targetFat} color={C.fat} />
+        <MacroBar name="Protéines" v={Math.round(consumed.p)} t={settings.targetProtein} color={C.protein} unknown={consumedFromManual} />
+        <MacroBar name="Glucides" v={Math.round(consumed.c)} t={settings.targetCarb} color={C.carb} unknown={consumedFromManual} />
+        <MacroBar name="Lipides" v={Math.round(consumed.f)} t={settings.targetFat} color={C.fat} unknown={consumedFromManual} />
       </div>
+      {consumedFromManual && (
+        <div className="mt-2 text-[11.5px]" style={{ color: C.faint }}>
+          Macros : total kcal saisi, détail non renseigné.
+        </div>
+      )}
 
       {/* Sucres simples */}
       <div className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
@@ -105,18 +120,22 @@ export default function Jour() {
             Sucres simples
           </span>
           <span style={num} className="text-[12px] font-semibold">
-            <span
-              style={{
-                color:
-                  consumed.s >= settings.targetSugarsSimple
-                    ? C.warn
-                    : consumed.s >= settings.targetSugarsSimple * 0.75
-                      ? C.carb
-                      : C.text,
-              }}
-            >
-              {Math.round(consumed.s)}
-            </span>
+            {consumedFromManual ? (
+              <span style={{ color: C.faint }}>—</span>
+            ) : (
+              <span
+                style={{
+                  color:
+                    consumed.s >= settings.targetSugarsSimple
+                      ? C.warn
+                      : consumed.s >= settings.targetSugarsSimple * 0.75
+                        ? C.carb
+                        : C.text,
+                }}
+              >
+                {Math.round(consumed.s)}
+              </span>
+            )}
             <span style={{ color: C.faint }}> / {settings.targetSugarsSimple} g</span>
           </span>
         </div>
@@ -124,7 +143,7 @@ export default function Jour() {
           <div
             className="h-full rounded-full transition-all"
             style={{
-              width: `${Math.min(100, (consumed.s / settings.targetSugarsSimple) * 100)}%`,
+              width: consumedFromManual ? '0%' : `${Math.min(100, (consumed.s / settings.targetSugarsSimple) * 100)}%`,
               background: consumed.s >= settings.targetSugarsSimple ? C.warn : C.carb,
             }}
           />
@@ -136,7 +155,14 @@ export default function Jour() {
       </div>
 
       {/* Bilan énergétique : consommé − dépense totale du jour (saisie manuelle) */}
-      <Bilan consumedKcal={consumed.kcal} tracked={entryCount > 0} />
+      <Bilan
+        consumedKcal={consumedKcal}
+        tracked={entryCount > 0 || consumedFromManual}
+        manualIntake={manualIntake}
+        journalSum={consumed.kcal}
+        entryCount={entryCount}
+        onIntakeChange={setManualIntake}
+      />
 
       {/* Routine du jour : tickers interactifs (eau + compléments) */}
       <Tickers />
@@ -250,7 +276,7 @@ function WeightCard({ today, t }) {
 // stockée dans `dailyExpenditure` ; absence = non saisi. Le bilan est CALCULÉ.
 // Tant que la nutrition n'est pas implémentée (journal vide), on affiche un
 // état honnête côté consommé plutôt qu'un faux déficit.
-function Bilan({ consumedKcal, tracked }) {
+function Bilan({ consumedKcal, tracked, manualIntake, journalSum, entryCount, onIntakeChange }) {
   const [exp, setExp] = useState(undefined) // undefined = chargement · null = non saisi · nombre = kcal
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -286,6 +312,16 @@ function Bilan({ consumedKcal, tracked }) {
     setEditing(true)
     setDraft('')
     await clearExpenditure()
+  }
+
+  // Consommé total du jour : persiste puis remonte la valeur à Jour (héro + macros).
+  async function saveIntake(k) {
+    await setIntake(k)
+    onIntakeChange(k)
+  }
+  async function clearIntakeValue() {
+    await clearIntake()
+    onIntakeChange(null)
   }
 
   const balance = energyBalance(consumedKcal, exp)
@@ -345,19 +381,16 @@ function Bilan({ consumedKcal, tracked }) {
         )}
       </div>
 
-      {/* Consommé : honnête tant que la nutrition n'est pas suivie */}
-      <div className="flex items-center justify-between mt-2.5 text-[13px]">
-        <span style={{ color: C.muted }}>Consommé</span>
-        {tracked ? (
-          <span style={num} className="font-medium">
-            {Math.round(consumedKcal)} kcal
-          </span>
-        ) : (
-          <span className="text-[12px]" style={{ color: C.faint }}>
-            non suivi pour l'instant
-          </span>
-        )}
-      </div>
+      {/* Consommé : saisie rapide du TOTAL du jour (1 nombre, calque de la Dépense).
+          Total manuel prime ; sinon somme du journal tant que la nutrition n'est
+          pas là (seam D17, provisoire). Absence = non saisi. */}
+      <ConsumedRow
+        value={manualIntake}
+        journalSum={journalSum}
+        entryCount={entryCount}
+        onSave={saveIntake}
+        onClear={clearIntakeValue}
+      />
 
       {/* Bilan = consommé − dépensé (calculé, jamais stocké) */}
       <div className="mt-3 pt-3 border-t flex items-center justify-between" style={{ borderColor: C.line }}>
@@ -393,6 +426,85 @@ function Bilan({ consumedKcal, tracked }) {
           style={{ color: C.faint }}
         >
           Effacer la dépense du jour
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Consommé du jour : saisie rapide du total kcal (calque de la Dépense) ──
+// 1 nombre, pas de macros. Le total manuel prime sur la somme du journal tant
+// que la nutrition n'a pas de saisie (seam D17, provisoire). Absence = non saisi.
+// `value` est déjà résolu (Jour attend la fin du chargement avant de monter).
+function ConsumedRow({ value, journalSum, entryCount, onSave, onClear }) {
+  const [editing, setEditing] = useState(value == null && entryCount === 0)
+  const [draft, setDraft] = useState('')
+
+  async function save() {
+    const n = Number(draft.replace(',', '.'))
+    if (!Number.isFinite(n) || n < 0) return
+    setEditing(false)
+    setDraft('')
+    await onSave(Math.round(n))
+  }
+
+  async function clear() {
+    setEditing(true)
+    setDraft('')
+    await onClear()
+  }
+
+  // Hors édition : total manuel si saisi, sinon somme du journal (fallback).
+  const fallbackToJournal = value == null && entryCount > 0
+  const shown = value != null ? value : Math.round(journalSum || 0)
+
+  return (
+    <div className="mt-2.5">
+      <div className="flex items-center justify-between text-[13px]">
+        <span style={{ color: C.muted }}>Consommé</span>
+        {editing ? (
+          <div className="flex items-center gap-2">
+            <input
+              inputMode="numeric"
+              aria-label="Consommé total du jour en kcal"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && save()}
+              placeholder="kcal"
+              className="w-20 text-right rounded-lg px-2 py-1 text-[13px] border tabular-nums"
+              style={{ background: C.surfaceHi, borderColor: C.line, color: C.text }}
+            />
+            <button
+              type="button"
+              aria-label="Enregistrer le consommé"
+              onClick={save}
+              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg active:scale-95 transition"
+              style={{ background: C.energy, color: C.bg }}
+            >
+              OK
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label="Modifier le consommé du jour"
+            onClick={() => {
+              setEditing(true)
+              setDraft(value != null ? String(value) : '')
+            }}
+            className="flex items-center gap-1.5 text-[13px] font-semibold active:scale-95 transition"
+            style={{ color: C.text }}
+          >
+            <span data-testid="consumed-value" style={num}>
+              {shown}
+            </span>
+            <span style={{ color: C.faint }}>kcal{fallbackToJournal ? ' (repas)' : ''}</span>
+          </button>
+        )}
+      </div>
+      {value != null && !editing && (
+        <button type="button" onClick={clear} className="mt-1 text-[11px]" style={{ color: C.faint }}>
+          Effacer le consommé du jour
         </button>
       )}
     </div>
@@ -509,14 +621,14 @@ function StepBtn({ label, onClick, disabled, children }) {
 }
 
 // ── Barre macro ────────────────────────────────────────────────────
-function MacroBar({ name, v, t, color }) {
-  const pct = Math.min(100, (v / t) * 100)
+function MacroBar({ name, v, t, color, unknown }) {
+  const pct = unknown ? 0 : Math.min(100, (v / t) * 100)
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1">
         <span className="text-[13px] font-medium">{name}</span>
         <span style={num} className="text-[12.5px]">
-          <span className="font-semibold">{v}</span>
+          {unknown ? <span style={{ color: C.faint }}>—</span> : <span className="font-semibold">{v}</span>}
           <span style={{ color: C.faint }}> / {t} g</span>
         </span>
       </div>

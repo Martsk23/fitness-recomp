@@ -7,14 +7,15 @@ import Dexie from 'dexie'
 // Deux constantes DISTINCTES :
 //  - DEXIE_VERSION  : version du store IndexedDB (mécanique Dexie).
 //  - SCHEMA_VERSION : version du format d'export JSON (compat backups).
-export const DEXIE_VERSION = 3
+export const DEXIE_VERSION = 4
 // Première version à PK UUID. À partir d'elle, les montées de version sont
 // ADDITIVES (nouveau store / index) → Dexie les applique sans wipe. Le wipe
 // destructif (D13) est réservé aux bases ANTÉRIEURES (v1, PK auto-incrément).
 export const FIRST_UUID_DEXIE_VERSION = 2
-// SCHEMA_VERSION reste à 2 : l'ajout de la table `dailyExpenditure` est
-// rétro-compatible à l'import (table absente d'un vieux bundle ⇒ vide). Pas de
-// rupture du format → on NE bumpe PAS (un bump rejetterait les backups v2).
+// SCHEMA_VERSION reste à 2 : l'ajout des tables `dailyExpenditure` (v3) puis
+// `dailyIntake` (v4) est rétro-compatible à l'import (table absente d'un vieux
+// bundle ⇒ vide). Pas de rupture du format → on NE bumpe PAS (un bump
+// rejetterait les backups v2). Tolérance d'import prouvée par le test S6.
 export const SCHEMA_VERSION = 2
 
 // settings est un singleton → clé sentinelle fixe (lecture déterministe).
@@ -47,6 +48,14 @@ db.version(DEXIE_VERSION).stores({
   dailyExpenditure: 'id, &date',
 })
 
+// v4 — montée ADDITIVE : nouveau store `dailyIntake` (consommé TOTAL du jour,
+// saisi à la main, 1 ligne par date — même invariant que `dailyExpenditure`).
+// Additive (D16/D17) → aucune base existante n'est wipée ; Dexie crée juste le
+// store (préservation prouvée par le test S7 de migration.test.mjs).
+db.version(DEXIE_VERSION).stores({
+  dailyIntake: 'id, &date', // index UNIQUE &date : verrou « 1 ligne/date »
+})
+
 // Source unique de vérité pour l'export/import. Garder synchronisé avec stores().
 export const TABLES = [
   'ingredients',
@@ -59,6 +68,7 @@ export const TABLES = [
   'drinks',
   'settings',
   'dailyExpenditure',
+  'dailyIntake',
 ]
 
 // ── Helpers d'écriture ─────────────────────────────────────────────

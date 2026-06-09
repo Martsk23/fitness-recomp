@@ -41,6 +41,13 @@ const V2_STORES = {
   settings: 'id',
 }
 
+// Schéma v3 EXACT = v2 + dailyExpenditure. Sert à fabriquer une base v3 réelle
+// pour prouver l'upgrade additif v3→v4 (ajout de dailyIntake, données préservées).
+const V3_STORES = {
+  ...V2_STORES,
+  dailyExpenditure: 'id, &date',
+}
+
 async function wipeAll() {
   if (db.isOpen()) db.close()
   await Dexie.delete('fitnessRecomp')
@@ -262,6 +269,38 @@ async function s6_import_tolerance() {
   if (db.isOpen()) db.close()
 }
 
+// ── S7 — Base v3 RÉELLE → bump v4 = upgrade ADDITIF (PAS de wipe) ───
+// Même garde-fou que S5, un cran plus loin (D17) : un device déjà en v3 (Tâche
+// 4, avec dépense saisie) ne doit PAS être wipé par le bump « consommé rapide ».
+// Dexie ajoute le store dailyIntake et préserve tout le reste.
+async function s7_v3_to_v4() {
+  console.log('\n— S7 : upgrade additif v3 → v4 (préservation des données) —')
+  await wipeAll()
+
+  // Fabrique une base v3 réelle (PK UUID, version Dexie 3) avec des données.
+  const v3 = new Dexie('fitnessRecomp')
+  v3.version(3).stores(V3_STORES)
+  await v3.open()
+  ok(v3.verno === 3, 'base fabriquée en version Dexie 3')
+  await v3.settings.add({ id: SETTINGS_KEY, profile: null, targetsSource: 'fallback', targetSugarsSimple: 20, updatedAt: Date.now() })
+  await v3.dailyExpenditure.add({ id: crypto.randomUUID(), date: '2026-06-09', kcal: 2500, updatedAt: Date.now() })
+  v3.close()
+
+  // migrate ne doit PAS wiper : v3 ≥ FIRST_UUID → 'dexie-upgrade'.
+  const r = await migrateLegacyIfNeeded()
+  ok(r.migrated === false && r.reason === 'dexie-upgrade', 'base v3 → PAS de wipe (upgrade additif Dexie)')
+  ok((await getMigrationBackups()).length === 0, 'aucun backup de wipe créé (rien wipé)')
+
+  // db.open() applique version(4) → ajoute dailyIntake, préserve les données.
+  await db.open()
+  ok(db.verno >= 4, 'base montée en version Dexie ≥ 4')
+  ok((await db.dailyExpenditure.count()) === 1, 'DONNÉES PRÉSERVÉES : la dépense v3 survit à l\'upgrade')
+  const s = await db.settings.get(SETTINGS_KEY)
+  ok(!!s && s.targetSugarsSimple === 20, 'DONNÉES PRÉSERVÉES : settings v3 intacts')
+  ok((await db.dailyIntake.count()) === 0, 'nouveau store dailyIntake créé et vide')
+  if (db.isOpen()) db.close()
+}
+
 async function main() {
   await s1_fresh()
   await s2_legacy()
@@ -269,6 +308,7 @@ async function main() {
   await s4_roundtrip(v1data)
   await s5_v2_to_v3()
   await s6_import_tolerance()
+  await s7_v3_to_v4()
   if (db.isOpen()) db.close()
   console.log(`\n${exitCode === 0 ? 'TOUS LES TESTS PASSENT' : 'ÉCHECS DÉTECTÉS'}`)
   process.exit(exitCode)
