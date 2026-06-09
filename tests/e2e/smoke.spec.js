@@ -20,3 +20,24 @@ test("l'écran Jour se monte (ne rend pas null) après seed", async ({ page }) =
 
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
+
+test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
+  await page.goto('/')
+
+  // Onglet Poids → saisie (virgule décimale, comme au clavier FR) → enregistrer.
+  await page.getByRole('button', { name: 'Poids' }).click()
+  await page.getByLabel('Poids en kilogrammes').fill('77,7')
+  await page.getByRole('button', { name: 'Enregistrer' }).click()
+
+  // Apparaît dans l'historique.
+  await expect(page.getByText('77,7 kg').first()).toBeVisible()
+
+  // Persistance réelle : reload complet (IndexedDB), retour sur l'onglet Poids.
+  await page.reload()
+  await page.getByRole('button', { name: 'Poids' }).click()
+  await expect(page.getByText('77,7 kg').first()).toBeVisible()
+
+  // Et le dashboard Jour reflète la pesée du jour.
+  await page.getByRole('button', { name: 'Jour' }).click()
+  await expect(page.getByText('Pesée enregistrée')).toBeVisible()
+})

@@ -3,6 +3,7 @@ import { CalendarDays, Settings, Sun, Plus, Scale, Dumbbell, MessageCircle } fro
 import { C, formatFrDate } from './ui.js'
 import Jour from './screens/Jour.jsx'
 import Data from './screens/Data.jsx'
+import Poids from './screens/Poids.jsx'
 
 export default function App() {
   const [tab, setTab] = useState('jour')
@@ -40,7 +41,8 @@ export default function App() {
         <div className="flex-1 overflow-y-auto">
           {tab === 'jour' && <Jour />}
           {tab === 'data' && <Data />}
-          {tab !== 'jour' && tab !== 'data' && <Placeholder tab={tab} />}
+          {tab === 'poids' && <Poids />}
+          {tab !== 'jour' && tab !== 'data' && tab !== 'poids' && <Placeholder tab={tab} />}
         </div>
 
         {/* ── Tab bar ─────────────────────────────────────────────── */}

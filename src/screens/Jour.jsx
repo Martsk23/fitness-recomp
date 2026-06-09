@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Sun, TrendingDown } from 'lucide-react'
+import { Sun, TrendingDown, TrendingUp, Minus, Scale } from 'lucide-react'
 import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
+import { trend, shouldWeighNow } from '../lib/weight.js'
+
+const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
 // Phase 0 : tableau de bord en lecture seule, alimenté par Dexie.
 // Les écrans de SAISIE (ajout rapide, tickers interactifs, pesée) arrivent en Phase 1.
@@ -9,13 +12,20 @@ export default function Jour() {
   const [settings, setSettings] = useState(null)
   const [consumed, setConsumed] = useState({ kcal: 0, p: 0, c: 0, f: 0, s: 0 })
   const [entryCount, setEntryCount] = useState(0)
+  const [weight, setWeight] = useState({ today: null, t: { direction: 'flat', deltaKg: 0 } })
 
   useEffect(() => {
     let alive = true
     ;(async () => {
       const s = await db.settings.get(SETTINGS_KEY)
       const entries = await db.journalEntries.where('date').equals(todayKey()).toArray()
+      const logs = await db.weightLogs.orderBy('datetime').toArray()
       if (!alive) return
+      const todayLogs = logs.filter((l) => l.date === todayKey())
+      setWeight({
+        today: todayLogs.length ? todayLogs[todayLogs.length - 1].weightKg : null,
+        t: trend(logs.map((l) => l.weightKg)),
+      })
       const agg = entries.reduce(
         (a, e) => ({
           kcal: a.kcal + (e.kcal || 0),
@@ -112,6 +122,9 @@ export default function Jour() {
         </div>
       </div>
 
+      {/* Poids du jour + tendance, ou invitation à se peser le matin */}
+      <WeightCard today={weight.today} t={weight.t} />
+
       {/* Bandeau Phase 0 — honnête sur l'état réel */}
       {entryCount === 0 && (
         <div
@@ -162,6 +175,54 @@ function EnergyRing({ pct }) {
         budget
       </text>
     </svg>
+  )
+}
+
+// ── Carte poids du jour ────────────────────────────────────────────
+function WeightCard({ today, t }) {
+  if (today != null) {
+    const map = {
+      down: { Icon: TrendingDown, color: C.energy },
+      up: { Icon: TrendingUp, color: C.carb },
+      flat: { Icon: Minus, color: C.muted },
+    }
+    const { Icon, color } = map[t.direction]
+    return (
+      <div
+        className="mt-4 rounded-2xl p-3.5 border flex items-center justify-between"
+        style={{ background: C.surface, borderColor: C.line }}
+      >
+        <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: C.muted }}>
+          <Scale size={16} style={{ color: C.energy }} /> Pesée enregistrée
+          {t.direction !== 'flat' && (
+            <Icon size={13} style={{ color }} />
+          )}
+        </span>
+        <span style={num} className="text-[15px] font-semibold">
+          {fmtKg(today)} kg
+        </span>
+      </div>
+    )
+  }
+  // Pas pesé aujourd'hui : CTA "à jeun" le matin, sinon rappel discret.
+  const inviteNow = shouldWeighNow({ hasLoggedToday: false })
+  if (inviteNow) {
+    return (
+      <div
+        className="mt-4 rounded-2xl p-3.5 border flex items-center gap-2 text-[13px] font-medium"
+        style={{ background: 'rgba(56,189,248,0.06)', borderColor: 'rgba(56,189,248,0.25)', color: C.protein }}
+      >
+        <Scale size={16} /> Bon moment pour te peser — à jeun, avant le petit-déj.
+      </div>
+    )
+  }
+  return (
+    <div
+      className="mt-4 rounded-2xl p-3.5 border flex items-center gap-2 text-[13px]"
+      style={{ background: C.surface, borderColor: C.line, color: C.muted }}
+    >
+      <Scale size={16} style={{ color: C.faint }} /> Pas encore pesé aujourd'hui.
+    </div>
   )
 }
 
