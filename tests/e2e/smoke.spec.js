@@ -399,6 +399,94 @@ test('PWA fresh install : storage vierge → 1ʳᵉ ouverture → 58 ingrédient
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('recettes : composer poulet+riz → enregistrer comme recette → rappeler → 2 entrées figées au journal → reload persiste', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Compose poulet 200 g (120/100g → 240) + riz cuit 150 g (130/100g → 195) = 435.
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('blanc-poulet-cru')
+  await page.getByLabel('Grammes').fill('200')
+  await page.getByLabel('Ajouter au plat').click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('riz-blanc-cuit')
+  await page.getByLabel('Grammes').fill('150')
+  await page.getByLabel('Ajouter au plat').click()
+  await expect(page.getByTestId('meal-total-kcal')).toHaveText('435')
+
+  // Enregistre comme recette → les lignes RESTENT (action annexe), confirmation visible.
+  await page.getByRole('button', { name: 'Enregistrer comme recette' }).click()
+  await page.getByLabel('Nom de la recette').fill('Mon plat')
+  await page.getByRole('button', { name: 'Valider la recette' }).click()
+  await expect(page.getByText('Recette « Mon plat » enregistrée.')).toBeVisible()
+  await expect(page.getByTestId('meal-total-kcal')).toHaveText('435') // lignes conservées
+
+  // Onglet Recettes → Rappeler → append au journal (macros figées D1), bandeau succès.
+  await page.getByRole('button', { name: 'Recettes' }).click()
+  await expect(page.getByText('2 ingrédients')).toBeVisible()
+  await page.getByRole('button', { name: 'Rappeler Mon plat' }).click()
+  await expect(page.getByText(/2 lignes ajoutées au journal/)).toBeVisible()
+
+  // Journal : 2 entrées aux macros figées (240 + 195), nom courant.
+  await page.getByRole('button', { name: 'Journal' }).click()
+  await expect(page.getByText('Blanc de poulet (cru)')).toBeVisible()
+  await expect(page.getByText(/200 g · 240 kcal/)).toBeVisible()
+  await expect(page.getByText('Riz blanc (cuit)')).toBeVisible()
+  await expect(page.getByText(/150 g · 195 kcal/)).toBeVisible()
+
+  // Persistance réelle : reload (IndexedDB) → les 2 entrées rappelées survivent.
+  await page.reload()
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByRole('button', { name: 'Journal' }).click()
+  await expect(page.getByText(/200 g · 240 kcal/)).toBeVisible()
+  await expect(page.getByText(/150 g · 195 kcal/)).toBeVisible()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
+test('recettes dégradé : ingrédient référencé supprimé → ligne sautée + avertissement, seule la ligne valide est loguée', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Recette poulet + riz.
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('blanc-poulet-cru')
+  await page.getByLabel('Grammes').fill('200')
+  await page.getByLabel('Ajouter au plat').click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('riz-blanc-cuit')
+  await page.getByLabel('Grammes').fill('150')
+  await page.getByLabel('Ajouter au plat').click()
+  await page.getByRole('button', { name: 'Enregistrer comme recette' }).click()
+  await page.getByLabel('Nom de la recette').fill('Test recette')
+  await page.getByRole('button', { name: 'Valider la recette' }).click()
+  await expect(page.getByText('Recette « Test recette » enregistrée.')).toBeVisible()
+
+  // Le riz disparaît de la bibliothèque (la recette garde sa référence + nameSnapshot).
+  await page.getByRole('button', { name: 'Bibliothèque' }).click()
+  await page.getByRole('button', { name: 'Supprimer Riz blanc (cuit)' }).click()
+  await expect(page.getByText('Riz blanc (cuit)')).toHaveCount(0)
+
+  // Rappel → ligne morte sautée + avertissement (nameSnapshot du supprimé), 1 ligne ajoutée.
+  await page.getByRole('button', { name: 'Recettes' }).click()
+  await page.getByRole('button', { name: 'Rappeler Test recette' }).click()
+  await expect(page.getByText(/supprimé, ignoré : Riz blanc \(cuit\)/)).toBeVisible()
+  await expect(page.getByText(/1 ligne ajoutée au journal/)).toBeVisible()
+
+  // Journal : SEULE la ligne résolue (poulet) est écrite, pas la morte.
+  await page.getByRole('button', { name: 'Journal' }).click()
+  await expect(page.getByText('Blanc de poulet (cru)')).toBeVisible()
+  await expect(page.getByText('Riz blanc (cuit)')).toHaveCount(0)
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)

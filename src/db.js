@@ -7,15 +7,15 @@ import Dexie from 'dexie'
 // Deux constantes DISTINCTES :
 //  - DEXIE_VERSION  : version du store IndexedDB (mécanique Dexie).
 //  - SCHEMA_VERSION : version du format d'export JSON (compat backups).
-export const DEXIE_VERSION = 4
+export const DEXIE_VERSION = 5
 // Première version à PK UUID. À partir d'elle, les montées de version sont
 // ADDITIVES (nouveau store / index) → Dexie les applique sans wipe. Le wipe
 // destructif (D13) est réservé aux bases ANTÉRIEURES (v1, PK auto-incrément).
 export const FIRST_UUID_DEXIE_VERSION = 2
-// SCHEMA_VERSION reste à 2 : l'ajout des tables `dailyExpenditure` (v3) puis
-// `dailyIntake` (v4) est rétro-compatible à l'import (table absente d'un vieux
-// bundle ⇒ vide). Pas de rupture du format → on NE bumpe PAS (un bump
-// rejetterait les backups v2). Tolérance d'import prouvée par le test S6.
+// SCHEMA_VERSION reste à 2 : l'ajout des tables `dailyExpenditure` (v3),
+// `dailyIntake` (v4) puis `recipes` (v5) est rétro-compatible à l'import (table
+// absente d'un vieux bundle ⇒ vide). Pas de rupture du format → on NE bumpe PAS
+// (un bump rejetterait les backups v2). Tolérance d'import prouvée par le test S6.
 export const SCHEMA_VERSION = 2
 
 // settings est un singleton → clé sentinelle fixe (lecture déterministe).
@@ -56,6 +56,17 @@ db.version(DEXIE_VERSION).stores({
   dailyIntake: 'id, &date', // index UNIQUE &date : verrou « 1 ligne/date »
 })
 
+// v5 — montée ADDITIVE (Recettes récurrentes) : nouveau store `recipes`. Une
+// recette = formule de RÉFÉRENCES vivante ({ sourceId, nameSnapshot, grams }),
+// PAS un snapshot figé ; les macros ne se figent (D1) qu'à l'application au
+// journal via saveMeal. Additive (D16/D19) → aucune base existante wipée ;
+// Dexie crée juste le store (préservation prouvée par le test S8). Delta-only :
+// on ne redéclare PAS les 11 stores existants (Dexie fusionne les .stores() de
+// la même version — prouvé par S5/S7).
+db.version(DEXIE_VERSION).stores({
+  recipes: 'id, name', // PK UUID (newRow) ; index `name` pour le tri/liste
+})
+
 // Source unique de vérité pour l'export/import. Garder synchronisé avec stores().
 export const TABLES = [
   'ingredients',
@@ -69,6 +80,7 @@ export const TABLES = [
   'settings',
   'dailyExpenditure',
   'dailyIntake',
+  'recipes',
 ]
 
 // ── Helpers d'écriture ─────────────────────────────────────────────

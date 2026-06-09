@@ -48,6 +48,13 @@ const V3_STORES = {
   dailyExpenditure: 'id, &date',
 }
 
+// Schéma v4 EXACT = v3 + dailyIntake. Sert à fabriquer une base v4 réelle pour
+// prouver l'upgrade additif v4→v5 (ajout de recipes, données préservées).
+const V4_STORES = {
+  ...V3_STORES,
+  dailyIntake: 'id, &date',
+}
+
 async function wipeAll() {
   if (db.isOpen()) db.close()
   await Dexie.delete('fitnessRecomp')
@@ -301,6 +308,41 @@ async function s7_v3_to_v4() {
   if (db.isOpen()) db.close()
 }
 
+// ── S8 — Base v4 RÉELLE → bump v5 = upgrade ADDITIF (PAS de wipe) ───
+// Même garde-fou que S5/S7, un cran plus loin (D19) : un device déjà en v4
+// (Tâche 4.5, avec consommé saisi) ne doit PAS être wipé par le bump « recettes ».
+// Dexie ajoute le store recipes et préserve tout le reste. PORTE DURE : ce test
+// doit être VERT avant tout déploiement device.
+async function s8_v4_to_v5() {
+  console.log('\n— S8 : upgrade additif v4 → v5 (préservation des données) —')
+  await wipeAll()
+
+  // Fabrique une base v4 réelle (PK UUID, version Dexie 4) avec des données.
+  const v4 = new Dexie('fitnessRecomp')
+  v4.version(4).stores(V4_STORES)
+  await v4.open()
+  ok(v4.verno === 4, 'base fabriquée en version Dexie 4')
+  await v4.settings.add({ id: SETTINGS_KEY, profile: null, targetsSource: 'fallback', targetSugarsSimple: 20, librarySeededV1: true, updatedAt: Date.now() })
+  await v4.dailyIntake.add({ id: crypto.randomUUID(), date: '2026-06-10', kcal: 2100, updatedAt: Date.now() })
+  await v4.journalEntries.add({ id: crypto.randomUUID(), date: '2026-06-10', sourceType: 'ingredient', sourceId: 'riz-blanc-cuit', nameSnapshot: 'Riz', grams: 150, kcal: 195, protein: 4.1, carb: 42, sugarsSimple: 0.2, fat: 0.5, gi: 'high', createdAt: Date.now(), loggedAt: Date.now(), updatedAt: Date.now() })
+  v4.close()
+
+  // migrate ne doit PAS wiper : v4 ≥ FIRST_UUID → 'dexie-upgrade'.
+  const r = await migrateLegacyIfNeeded()
+  ok(r.migrated === false && r.reason === 'dexie-upgrade', 'base v4 → PAS de wipe (upgrade additif Dexie)')
+  ok((await getMigrationBackups()).length === 0, 'aucun backup de wipe créé (rien wipé)')
+
+  // db.open() applique version(5) → ajoute recipes, préserve les données.
+  await db.open()
+  ok(db.verno >= 5, 'base montée en version Dexie ≥ 5')
+  ok((await db.dailyIntake.count()) === 1, 'DONNÉES PRÉSERVÉES : le consommé v4 survit à l\'upgrade')
+  ok((await db.journalEntries.count()) === 1, 'DONNÉES PRÉSERVÉES : le journal v4 survit à l\'upgrade')
+  const s = await db.settings.get(SETTINGS_KEY)
+  ok(!!s && s.targetSugarsSimple === 20 && s.librarySeededV1 === true, 'DONNÉES PRÉSERVÉES : settings v4 intacts (flag biblio inclus)')
+  ok((await db.recipes.count()) === 0, 'nouveau store recipes créé et vide')
+  if (db.isOpen()) db.close()
+}
+
 async function main() {
   await s1_fresh()
   await s2_legacy()
@@ -309,6 +351,7 @@ async function main() {
   await s5_v2_to_v3()
   await s6_import_tolerance()
   await s7_v3_to_v4()
+  await s8_v4_to_v5()
   if (db.isOpen()) db.close()
   console.log(`\n${exitCode === 0 ? 'TOUS LES TESTS PASSENT' : 'ÉCHECS DÉTECTÉS'}`)
   process.exit(exitCode)

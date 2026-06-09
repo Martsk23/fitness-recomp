@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Trash2, Check, X, Pencil, UtensilsCrossed } from 'lucide-react'
+import { Plus, Search, Trash2, Check, X, Pencil, UtensilsCrossed, RotateCcw, AlertTriangle, BookMarked } from 'lucide-react'
 import { C, num } from '../ui.js'
 import {
   loadIngredients,
@@ -13,15 +13,21 @@ import {
   lineMacros,
   composeTotals,
   distinctCategories,
+  loadRecipes,
+  saveRecipe,
+  renameRecipe,
+  deleteRecipe,
+  applyRecipe,
 } from '../lib/nutrition.js'
 
 const parseNum = (s) => Number(String(s).replace(',', '.').trim())
 const GI_LABEL = { low: 'IG bas', mid: 'IG modéré', high: 'IG haut' }
 
 export default function Bouffe() {
-  const [view, setView] = useState('composer') // composer | biblio | journal
+  const [view, setView] = useState('composer') // composer | journal | biblio | recettes
   const [ingredients, setIngredients] = useState(null)
   const [entries, setEntries] = useState([])
+  const [recipes, setRecipes] = useState([])
 
   async function reloadIngredients() {
     setIngredients(await loadIngredients())
@@ -29,13 +35,17 @@ export default function Bouffe() {
   async function reloadEntries() {
     setEntries(await loadDayEntries())
   }
+  async function reloadRecipes() {
+    setRecipes(await loadRecipes())
+  }
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const [ings, ents] = await Promise.all([loadIngredients(), loadDayEntries()])
+      const [ings, ents, recs] = await Promise.all([loadIngredients(), loadDayEntries(), loadRecipes()])
       if (!alive) return
       setIngredients(ings)
       setEntries(ents)
+      setRecipes(recs)
     })()
     return () => {
       alive = false
@@ -51,6 +61,7 @@ export default function Bouffe() {
         <SubTab id="composer" label="Composer" view={view} set={setView} />
         <SubTab id="journal" label="Journal" view={view} set={setView} />
         <SubTab id="biblio" label="Bibliothèque" view={view} set={setView} />
+        <SubTab id="recettes" label="Recettes" view={view} set={setView} />
       </div>
 
       {view === 'composer' && (
@@ -60,10 +71,17 @@ export default function Bouffe() {
             await reloadEntries()
             setView('journal')
           }}
+          onRecipeSaved={reloadRecipes}
         />
       )}
       {view === 'journal' && <Journal entries={entries} onChange={reloadEntries} />}
       {view === 'biblio' && <Library ingredients={ingredients} onChange={reloadIngredients} />}
+      {view === 'recettes' && (
+        // onApplied ne bascule PAS vers Journal : on reste sur Recettes pour que
+        // le bandeau de retour (succès / avertissement lignes mortes) reste visible.
+        // Le journal est rafraîchi en fond (l'onglet Journal le montrera à jour).
+        <Recipes recipes={recipes} onChange={reloadRecipes} onApplied={reloadEntries} />
+      )}
     </div>
   )
 }
@@ -83,10 +101,12 @@ function SubTab({ id, label, view, set }) {
 }
 
 // ── (b) Composer un plat par pesée ─────────────────────────────────
-function Composer({ ingredients, onSaved }) {
+function Composer({ ingredients, onSaved, onRecipeSaved }) {
   const [pickId, setPickId] = useState('')
   const [gramsStr, setGramsStr] = useState('')
   const [lines, setLines] = useState([]) // [{ ing, grams }]
+  const [recipeName, setRecipeName] = useState(null) // null = formulaire fermé
+  const [recipeNote, setRecipeNote] = useState('')
   const cats = useMemo(() => distinctCategories(ingredients), [ingredients])
 
   function addLine() {
@@ -108,6 +128,17 @@ function Composer({ ingredients, onSaved }) {
     await saveMeal(lines)
     setLines([])
     await onSaved()
+  }
+
+  // Enregistre la compo COURANTE comme recette réutilisable. Les lignes RESTENT
+  // en place (action annexe — on peut vouloir aussi loguer ces lignes aujourd'hui).
+  async function saveAsRecipe() {
+    const name = String(recipeName || '').trim()
+    if (!name || !lines.length) return
+    await saveRecipe(name, lines)
+    setRecipeName(null)
+    setRecipeNote(`Recette « ${name} » enregistrée.`)
+    await onRecipeSaved()
   }
 
   return (
@@ -212,6 +243,57 @@ function Composer({ ingredients, onSaved }) {
           >
             Enregistrer le repas
           </button>
+
+          {/* Action annexe : figer cette compo comme recette réutilisable. */}
+          {recipeName === null ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRecipeName('')
+                setRecipeNote('')
+              }}
+              className="mt-2 w-full rounded-xl py-2 text-[13px] font-semibold active:scale-95 transition flex items-center justify-center gap-1.5"
+              style={{ background: C.surface, color: C.text, border: `1px solid ${C.line}` }}
+            >
+              <BookMarked size={15} /> Enregistrer comme recette
+            </button>
+          ) : (
+            <div className="mt-2 flex items-center gap-1.5">
+              <input
+                type="text"
+                aria-label="Nom de la recette"
+                placeholder="Nom de la recette"
+                value={recipeName}
+                onChange={(e) => setRecipeName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && saveAsRecipe()}
+                className="flex-1 rounded-xl px-3 py-2 text-[14px] outline-none border"
+                style={{ background: C.bg, borderColor: C.line, color: C.text }}
+              />
+              <button
+                type="button"
+                onClick={saveAsRecipe}
+                aria-label="Valider la recette"
+                className="rounded-xl px-3 py-2 text-[13px] font-semibold active:scale-95 transition"
+                style={{ background: C.energy, color: C.bg }}
+              >
+                <Check size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecipeName(null)}
+                aria-label="Annuler la recette"
+                className="rounded-xl px-3 py-2 active:scale-95 transition"
+                style={{ background: C.surface, color: C.faint, border: `1px solid ${C.line}` }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          {recipeNote && (
+            <div className="mt-2 text-[12px]" style={{ color: C.energy }}>
+              {recipeNote}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -623,6 +705,139 @@ function NumField({ label, v, on }) {
         style={{ background: C.bg, borderColor: C.line, color: C.text }}
       />
     </label>
+  )
+}
+
+// ── (d) Recettes récurrentes : rappeler / renommer / supprimer ─────
+// Sous-vue MINIMALE. « Rappeler » = append au journal du jour (macros figées D1
+// via applyRecipe→saveMeal), jamais remplacement. Pas d'édition des lignes :
+// pour changer une recette → la supprimer et re-save depuis le Composer.
+function Recipes({ recipes, onChange, onApplied }) {
+  const [feedback, setFeedback] = useState(null) // { kind: 'ok' | 'warn', text }
+
+  if (!recipes.length) {
+    return <EmptyHint icon={BookMarked} text="Aucune recette. Compose un plat puis « Enregistrer comme recette »." />
+  }
+  const warn = feedback?.kind === 'warn'
+  return (
+    <div>
+      {feedback && (
+        <div
+          className="flex items-start gap-2 rounded-xl px-3.5 py-2.5 border mb-3"
+          style={
+            warn
+              ? { background: 'rgba(251,191,36,0.08)', borderColor: 'rgba(251,191,36,0.3)', color: C.warn }
+              : { background: 'rgba(190,242,100,0.08)', borderColor: 'rgba(190,242,100,0.3)', color: C.energy }
+          }
+        >
+          {warn ? <AlertTriangle size={15} className="mt-0.5 shrink-0" /> : <Check size={15} className="mt-0.5 shrink-0" />}
+          <span className="text-[12.5px]">{feedback.text}</span>
+        </div>
+      )}
+      <div className="space-y-2">
+        {recipes.map((r) => (
+          <RecipeRow key={r.id} recipe={r} onChange={onChange} onApplied={onApplied} setFeedback={setFeedback} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RecipeRow({ recipe, onChange, onApplied, setFeedback }) {
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState('')
+  const count = (recipe.lines || []).length
+
+  async function recall() {
+    const { added, missing } = await applyRecipe(recipe.id)
+    const addedTxt = added > 0 ? `${added} ligne${added > 1 ? 's' : ''} ajoutée${added > 1 ? 's' : ''} au journal.` : 'aucune ligne ajoutée.'
+    if (missing.length) {
+      // nameSnapshot affiché UNIQUEMENT ici (résolution échouée), pas pour un
+      // ingrédient qui résout. Cas « toutes les lignes mortes » → added=0.
+      setFeedback({ kind: 'warn', text: `« ${recipe.name} » — supprimé, ignoré : ${missing.join(', ')}. ${addedTxt}` })
+    } else {
+      setFeedback({ kind: 'ok', text: `« ${recipe.name} » → ${addedTxt}` })
+    }
+    if (added > 0) await onApplied()
+  }
+  async function saveRename() {
+    const n = draft.trim()
+    if (!n) return
+    await renameRecipe(recipe.id, n)
+    setRenaming(false)
+    await onChange()
+  }
+  async function remove() {
+    await deleteRecipe(recipe.id)
+    await onChange()
+  }
+
+  return (
+    <div className="rounded-xl px-3.5 py-2.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          {renaming ? (
+            <input
+              type="text"
+              aria-label={`Nouveau nom ${recipe.name}`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && saveRename()}
+              className="w-full rounded-lg px-2 py-1 text-[13.5px] border"
+              style={{ background: C.surfaceHi, borderColor: C.line, color: C.text }}
+            />
+          ) : (
+            <>
+              <div className="text-[13.5px] font-medium truncate" style={{ color: C.text }}>
+                {recipe.name}
+              </div>
+              <div className="text-[11.5px]" style={{ color: C.faint, ...num }}>
+                {count} ingrédient{count > 1 ? 's' : ''}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {renaming ? (
+            <>
+              <button type="button" onClick={saveRename} aria-label="Valider le nom" className="p-1.5 active:scale-90" style={{ color: C.energy }}>
+                <Check size={16} />
+              </button>
+              <button type="button" onClick={() => setRenaming(false)} aria-label="Annuler le renommage" className="p-1.5 active:scale-90" style={{ color: C.faint }}>
+                <X size={16} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={recall}
+                aria-label={`Rappeler ${recipe.name}`}
+                className="rounded-lg px-2.5 py-1 text-[12.5px] font-semibold active:scale-95 transition flex items-center gap-1"
+                style={{ background: C.surfaceHi, color: C.energy }}
+              >
+                <RotateCcw size={13} /> Rappeler
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRenaming(true)
+                  setDraft(recipe.name)
+                }}
+                aria-label={`Renommer ${recipe.name}`}
+                className="p-1.5 active:scale-90"
+                style={{ color: C.faint }}
+              >
+                <Pencil size={15} />
+              </button>
+              <button type="button" onClick={remove} aria-label={`Supprimer la recette ${recipe.name}`} className="p-1.5 active:scale-90" style={{ color: C.faint }}>
+                <Trash2 size={15} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

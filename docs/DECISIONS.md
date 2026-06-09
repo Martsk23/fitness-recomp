@@ -111,3 +111,25 @@ Lot Nutrition (clôt la Phase 1) : bibliothèque d'ingrédients bruts /100 g + c
 - **Boissons déférées** : la table `drinks` reste en place mais le lot ne seed ni n'expose les ~38 boissons (ancien projet perdu, pas de source fiable → pas de fabrication de données). `sourceType:'drink'` (D2) non utilisé ici. Recréation = sous-tâche dédiée.
 
 **Pourquoi** : capter la nutrition par pesée (le besoin réel) sans toucher au schéma ni au backup, en respectant D1/D2/D5/D7/D10-D12. Le côté « consommé » du bilan (Tâche 4/4.5) s'allume **seul** dès que `journalEntries` se remplit (déjà câblé), sauf total manuel D17 qui prime. **L'intelligence glucidique reste en Phase 2** : ici on se contente de capter `sugarsSimple100` + `gi` dans le schéma. La règle définitive de réconciliation « consommé » (D17 provisoire) sera tranchée quand l'usage le justifiera.
+
+## D19 — Recettes récurrentes : store `recipes` additif (v5) + formule de RÉFÉRENCES vivante (≠ snapshot) + nameSnapshot fallback-only
+
+Recette réutilisable = composition mémorisée, rappelable en 1 tap dans le journal du jour. Choix actés :
+
+- **Store dédié `recipes` (DEXIE_VERSION 4→5), `SCHEMA_VERSION` reste 2.** Montée **purement ADDITIVE**, pattern **delta-only** identique à v3/v4 : une ligne `db.version(DEXIE_VERSION).stores({ recipes: 'id, name' })` partageant la constante (Dexie **fusionne** les `.stores()` d'une même version — on ne redéclare PAS les 11 stores existants), **aucun callback upgrade**. D16 s'applique tel quel : un device v4 réel n'est **jamais wipé**, le store est créé vide, données préservées — **verrouillé par le test S8** de `migration.test.mjs` (porte dure avant tout déploiement device). `TABLES += 'recipes'` **dans le même commit** (D7, sinon trou de sauvegarde). `backup.js` intouché (piloté par `TABLES`). `SCHEMA_VERSION` figé à 2 = rétro-compat import (table absente d'un vieux bundle ⇒ vide, tolérance prouvée S6).
+
+- **Une recette = formule de RÉFÉRENCES vivante, PAS un snapshot.** Stockée comme `lines: [{ sourceId, nameSnapshot, grams }]` — des références, **aucune macro figée dans la recette**. À chaque « Rappeler », `resolveRecipe` **re-résout** chaque `sourceId` contre la bibliothèque **courante** → nom + valeurs /100 g à jour. Le figeage **D1** n'arrive **qu'à l'application** au journal, via `saveMeal` (qui copie les macros calculées). Distinction nette : `journalEntries` = figé (D1) ; `recipes` = template vivant. Conséquence voulue : éditer un ingrédient (renommage, correction de macros) **se reflète** au prochain rappel, sans réécrire l'historique déjà journalisé.
+
+- **`nameSnapshot` = FALLBACK D'AFFICHAGE UNIQUEMENT.** Tant que l'ingrédient résout, l'UI montre **toujours** le nom **courant** (un renommage n'affiche jamais un nom périmé). Le `nameSnapshot` n'est lu **que** lorsque la résolution échoue (ingrédient supprimé) : la ligne est **sautée** et remontée dans un avertissement « *… — supprimé, ignoré* ». Cas **toutes lignes mortes** → **aucune** `journalEntry` écrite (pas de repas vide). Prouvé par `recipes.test.mjs` (R3 une ligne morte, R4 toutes mortes) + smoke dégradé.
+
+- **« Rappeler » = APPEND, jamais remplacement** (`applyRecipe` → `saveMeal` en `bulkAdd`). On reste sur la sous-vue Recettes avec un **bandeau de retour** (succès / avertissement) — pas de bascule vers Journal (sinon l'avertissement serait démonté).
+
+- **Édition différée** : seul le **renommage** (`renameRecipe`) est supporté. Changer les lignes d'une recette = la **supprimer + re-save** depuis le Composer (`updateRecipe` complet volontairement non construit).
+
+- **« Enregistrer comme recette » depuis le Composer = action annexe** : les lignes du Composer **RESTENT** en place après l'enregistrement (on peut vouloir aussi loguer ces lignes aujourd'hui). Distinct de « Enregistrer le repas » (qui vide + bascule Journal).
+
+- **Écran** : sous-vue **Recettes** via le segmented control en haut de Bouffe (`Composer | Journal | Bibliothèque | Recettes`) — pas une section sous la Bibliothèque, pas une destination de la nav du bas. Réutilise le pattern de liste existant.
+
+- **Recettes = INGRÉDIENTS seulement.** Boissons toujours déférées (D18) ; pas de cas boisson-dans-recette (`saveMeal` n'écrit que `sourceType:'ingredient'`).
+
+**Pourquoi** : besoin réel « je remange souvent les mêmes plats, je veux les rappeler en 1 tap » sans dupliquer la saisie. La formule vivante (références) bat le snapshot figé pour un **template** : corriger un ingrédient profite à tous les rappels futurs. Le figeage reste là où il doit être — **dans le journal** (D1) — pas dans le template. Store additif orthogonal : rien à arracher, aucun invariant existant rouvert (D1/D2/D5/D7/D10-D12/D16/D18 tous respectés).

@@ -198,3 +198,89 @@ export async function updateEntryGrams(id, newGrams) {
 export async function deleteEntry(id) {
   await db.journalEntries.delete(id)
 }
+
+// ── Recettes récurrentes (formule de RÉFÉRENCES vivante) ───────────
+// Une recette stocke `lines: [{ sourceId, nameSnapshot, grams }]` — des
+// références, PAS des macros. Ce n'est donc pas un snapshot figé : à chaque
+// « Rappeler », on RE-RÉSOUT chaque sourceId contre la bibliothèque COURANTE →
+// nom + valeurs /100 g à jour (formule vivante). Le figeage D1 n'arrive qu'à
+// l'application au journal, via saveMeal (qui copie les macros calculées).
+//
+// nameSnapshot = FALLBACK D'AFFICHAGE UNIQUEMENT : on ne le lit que lorsqu'un
+// ingrédient ne résout plus (supprimé), jamais pour un ingrédient qui résout
+// (sinon un renommage afficherait un nom périmé). Recettes = INGRÉDIENTS
+// seulement (boissons déférées) — saveMeal n'écrit que du sourceType:'ingredient'.
+
+export function validateRecipeName(name) {
+  if (!String(name || '').trim()) return { ok: false, error: 'Nom de recette requis.' }
+  return { ok: true }
+}
+
+/**
+ * Résolution PURE d'une recette contre la bibliothèque courante (Map id→ing).
+ * Retourne les lignes résolvables {ing, grams} (ingrédient VIVANT) et les
+ * manquantes (nameSnapshot des ingrédients supprimés). Testable sans base.
+ */
+export function resolveRecipe(recipe, ingredientsById) {
+  const resolved = []
+  const missing = []
+  for (const line of recipe.lines || []) {
+    const ing = ingredientsById.get(line.sourceId)
+    if (ing) resolved.push({ ing, grams: line.grams })
+    else missing.push(line.nameSnapshot || '(ingrédient supprimé)')
+  }
+  return { resolved, missing }
+}
+
+export async function loadRecipes() {
+  const rows = await db.recipes.toArray()
+  return rows.sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+}
+
+/**
+ * Enregistre une recette depuis des lignes de composition [{ing, grams}].
+ * Stocke des RÉFÉRENCES (sourceId + nameSnapshot fallback + grams), pas de macros.
+ * Lève si nom vide ou aucune ligne valide.
+ */
+export async function saveRecipe(name, lines) {
+  const v = validateRecipeName(name)
+  if (!v.ok) throw new Error(v.error)
+  const valid = (lines || []).filter((l) => l.ing && l.grams > 0)
+  if (!valid.length) throw new Error('Recette vide.')
+  const row = newRow({
+    name: name.trim(),
+    lines: valid.map((l) => ({ sourceId: l.ing.id, nameSnapshot: l.ing.name, grams: l.grams })),
+    createdAt: nowMs(),
+  })
+  await db.recipes.add(row)
+  return row
+}
+
+/** Renomme une recette (seule édition supportée ; changer les lignes = supprimer + re-save). */
+export async function renameRecipe(id, name) {
+  const v = validateRecipeName(name)
+  if (!v.ok) throw new Error(v.error)
+  const existing = await db.recipes.get(id)
+  if (!existing) throw new Error('Recette introuvable.')
+  await db.recipes.put(touch({ ...existing, name: name.trim() }))
+}
+
+export async function deleteRecipe(id) {
+  await db.recipes.delete(id)
+}
+
+/**
+ * Rappelle une recette → APPEND au journal du jour (jamais remplacement), macros
+ * FIGÉES à l'instant T via saveMeal (D1). Les lignes dont l'ingrédient a disparu
+ * sont SAUTÉES et remontées dans `missing` (avertissement UI). Si AUCUNE ligne ne
+ * résout, on n'écrit aucune entrée (pas de repas vide). Retourne { added, missing }.
+ */
+export async function applyRecipe(id, date = todayKey()) {
+  const recipe = await db.recipes.get(id)
+  if (!recipe) throw new Error('Recette introuvable.')
+  const ings = await db.ingredients.toArray()
+  const byId = new Map(ings.map((i) => [i.id, i]))
+  const { resolved, missing } = resolveRecipe(recipe, byId)
+  const added = await saveMeal(resolved, date) // [] → saveMeal écrit 0 entrée
+  return { added, missing }
+}
