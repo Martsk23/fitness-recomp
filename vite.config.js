@@ -5,6 +5,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Test on-device : bind 0.0.0.0 (LAN) + autorise les hôtes de tunnel HTTPS.
+  // Vite bloque par défaut les Host inconnus (anti DNS-rebinding).
+  server: { host: true, allowedHosts: ['.trycloudflare.com', '.ngrok-free.app'] },
+  preview: { host: true, allowedHosts: ['.trycloudflare.com', '.ngrok-free.app'] },
   plugins: [
     react(),
     tailwindcss(),
