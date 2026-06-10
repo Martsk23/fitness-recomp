@@ -11,12 +11,14 @@ import { glycemicShares, evaluateGlycemicAlerts } from '../lib/glycemic.js'
 import { loadRecipes, loadIngredients, applyRecipe } from '../lib/nutrition.js'
 import { alcoholKcal } from '../lib/drinks.js'
 import { suggestMeals, proteinDeficitYesterday } from '../lib/suggest.js'
+import { computeTargets } from '../lib/metabolic.js'
+import { windowDates, consumedMean, proteinMean, expenditureMean, sessionCount } from '../lib/dashboard.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
 // Phase 0 : tableau de bord en lecture seule, alimenté par Dexie.
 // Les écrans de SAISIE (ajout rapide, tickers interactifs, pesée) arrivent en Phase 1.
-export default function Jour() {
+export default function Jour({ onSeeJournal }) {
   const [settings, setSettings] = useState(null)
   const [consumed, setConsumed] = useState({ kcal: 0, p: 0, c: 0, f: 0, s: 0 })
   const [entryCount, setEntryCount] = useState(0)
@@ -154,7 +156,17 @@ export default function Jour() {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-3 text-[12px]" style={{ color: C.muted }}>
-            <span style={num}>{Math.round(consumedKcal)} mangé</span>
+            {/* « X mangé » → lien vers le détail de la journée (onglet Journal, D26).
+                Seul le consommé est cliquable (souligné discret + aria-label). */}
+            <button
+              type="button"
+              onClick={onSeeJournal}
+              aria-label="Voir le détail de la journée"
+              className="underline decoration-dotted underline-offset-2 active:scale-95 transition"
+              style={{ ...num, color: C.muted }}
+            >
+              {Math.round(consumedKcal)} mangé
+            </button>
             <span style={{ color: C.line }}>·</span>
             <span style={num} className="flex items-center gap-1">
               <TrendingDown size={12} style={{ color: C.energy }} /> objectif {targetKcal}
@@ -238,6 +250,11 @@ export default function Jour() {
           <span style={num}>Alcool : {alcoholK} kcal (non répartis)</span>
         </div>
       )}
+
+      {/* Anneaux de progression (D26) : énergie / protéines / dépense, toggle
+          JOUR/SEMAINE/MOIS (fenêtre glissante 7/30). 100 % dérivé, moyennes sur les
+          SEULS jours saisis (un jour vide n'est jamais compté 0). */}
+      <DashboardRings settings={settings} refreshKey={refreshKey} />
 
       {/* Suggestions de repas (D24) : dérivées des recettes (D19) + restants du jour.
           Sous le bloc restant (« voilà ton restant → voilà quoi manger »). 1 tap =
@@ -323,6 +340,175 @@ function EnergyRing({ pct }) {
         budget
       </text>
     </svg>
+  )
+}
+
+// ── Anneaux de progression (D26) : 3 côte à côte + toggle temporalité ──
+// 100 % DÉRIVÉ (lib/dashboard.js, pur). I/O ici : une range-query indexée par
+// `date` par table sur la fenêtre glissante. La cible de la dépense = TDEE dérivé
+// du profil (computeTargets, jamais stocké). Moyennes sur les SEULS jours saisis :
+// chaque anneau porte son propre « N j saisis » (N protéines ≤ N énergie, D20).
+const PERIODS = [
+  ['jour', 'Jour'],
+  ['semaine', 'Semaine'],
+  ['mois', 'Mois'],
+]
+
+function DashboardRings({ settings, refreshKey }) {
+  const [period, setPeriod] = useState('jour')
+  const [agg, setAgg] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const dates = windowDates(period)
+      const d0 = dates[0]
+      const d1 = dates[dates.length - 1]
+      const [entries, intakes, expends, trainings, wkouts, lastW] = await Promise.all([
+        db.journalEntries.where('date').between(d0, d1, true, true).toArray(),
+        db.dailyIntake.where('date').between(d0, d1, true, true).toArray(),
+        db.dailyExpenditure.where('date').between(d0, d1, true, true).toArray(),
+        db.trainingDays.where('date').between(d0, d1, true, true).toArray(),
+        db.workouts.where('date').between(d0, d1, true, true).toArray(),
+        db.weightLogs.orderBy('datetime').last(),
+      ])
+      if (!alive) return
+      const grp = (rows) => {
+        const m = {}
+        for (const r of rows) (m[r.date] ||= []).push(r)
+        return m
+      }
+      const eMap = grp(entries)
+      const wMap = grp(wkouts)
+      const iMap = Object.fromEntries(intakes.map((r) => [r.date, r.kcal]))
+      const xMap = Object.fromEntries(expends.map((r) => [r.date, r.kcal]))
+      const tSet = new Set(trainings.map((r) => r.date))
+      const days = dates.map((date) => {
+        const es = eMap[date] || []
+        return {
+          date,
+          entryCount: es.length,
+          journalKcal: es.reduce((a, e) => a + (e.kcal || 0), 0),
+          journalProtein: es.reduce((a, e) => a + (e.protein || 0), 0),
+          manualIntake: date in iMap ? iMap[date] : null,
+          expenditure: date in xMap ? xMap[date] : null,
+          trainingManual: tSet.has(date),
+          workouts: wMap[date] || [],
+        }
+      })
+      const tdee = lastW ? computeTargets(settings.profile, lastW.weightKg).tdee : null
+      setAgg({
+        consumed: consumedMean(days),
+        protein: proteinMean(days),
+        expenditure: expenditureMean(days),
+        sessions: sessionCount(days),
+        tdee,
+      })
+    })()
+    return () => {
+      alive = false
+    }
+  }, [period, refreshKey, settings])
+
+  return (
+    <div className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }} data-testid="dashboard-rings">
+      <div className="flex items-center justify-between mb-3.5">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+          Anneaux
+        </span>
+        <div className="flex gap-0.5 p-0.5 rounded-lg" style={{ background: C.surfaceHi }}>
+          {PERIODS.map(([id, lbl]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setPeriod(id)}
+              aria-label={`Période ${id}`}
+              aria-pressed={period === id}
+              className="px-2.5 py-1 rounded-md text-[11px] font-semibold active:scale-95 transition"
+              style={{ background: period === id ? C.surface : 'transparent', color: period === id ? C.text : C.faint }}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+      {agg === null ? (
+        <div className="h-[104px]" />
+      ) : (
+        <div className="flex items-start justify-around gap-1">
+          <RingStat label="Énergie" color={C.energy} period={period} stat={agg.consumed} target={settings.targetKcal} unit="kcal" />
+          <RingStat label="Protéines" color={C.protein} period={period} stat={agg.protein} target={settings.targetProtein} unit="g" />
+          <RingStat
+            label="Dépense"
+            color={C.carb}
+            period={period}
+            stat={agg.expenditure}
+            target={agg.tdee}
+            unit="kcal"
+            extra={`${agg.sessions.count} séance${agg.sessions.count > 1 ? 's' : ''}`}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RingStat({ label, color, period, stat, target, unit, extra }) {
+  const filled = stat.hasData && target > 0
+  const pct = filled ? Math.min(100, (stat.mean / target) * 100) : 0
+  const r = 26,
+    cx = 32,
+    cy = 32,
+    circ = 2 * Math.PI * r
+  return (
+    <div className="flex flex-col items-center gap-1.5" style={{ width: 96 }}>
+      <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={C.surfaceHi} strokeWidth="6" />
+        {filled && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth="6"
+            strokeLinecap="round"
+            strokeDasharray={circ}
+            strokeDashoffset={circ - (pct / 100) * circ}
+            transform={`rotate(-90 ${cx} ${cy})`}
+            style={{ transition: 'stroke-dashoffset 0.4s ease' }}
+          />
+        )}
+        <text x="32" y="37" textAnchor="middle" fill={filled ? C.text : C.faint} style={{ fontSize: 13, fontWeight: 800, ...num }}>
+          {filled ? `${Math.round(pct)}%` : '—'}
+        </text>
+      </svg>
+      <div className="text-[10.5px] font-semibold" style={{ color: C.muted }}>
+        {label}
+      </div>
+      <div className="text-[10px] text-center leading-tight" style={{ color: C.faint, ...num }}>
+        {!stat.hasData ? (
+          period === 'jour' ? (
+            'non saisi'
+          ) : (
+            'aucune donnée'
+          )
+        ) : period === 'jour' ? (
+          `${stat.mean} / ${target ?? '—'} ${unit}`
+        ) : (
+          <>
+            moy. {stat.mean} {unit}/j
+            <br />
+            {stat.nDays} j saisis
+          </>
+        )}
+      </div>
+      {extra != null && (
+        <div className="text-[10px]" style={{ color: C.faint, ...num }}>
+          {extra}
+        </div>
+      )}
+    </div>
   )
 }
 

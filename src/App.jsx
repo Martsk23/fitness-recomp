@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { CalendarDays, Settings, Sun, Plus, Scale, Dumbbell, MessageCircle, UserCog } from 'lucide-react'
+import { CalendarDays, Settings, Sun, NotebookText, Plus, Scale, Dumbbell, UserCog } from 'lucide-react'
 import { C, formatFrDate } from './ui.js'
 import { db, SETTINGS_KEY } from './db.js'
 import { isProfileComplete } from './lib/metabolic.js'
 import Jour from './screens/Jour.jsx'
+import Journal from './screens/Journal.jsx'
 import Data from './screens/Data.jsx'
 import Poids from './screens/Poids.jsx'
 import Profil from './screens/Profil.jsx'
@@ -73,26 +74,24 @@ export default function App() {
 
         {/* ── Contenu ─────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto">
-          {tab === 'jour' && <Jour />}
+          {tab === 'jour' && <Jour onSeeJournal={() => setTab('journal')} />}
+          {tab === 'journal' && <Journal />}
           {tab === 'data' && <Data />}
           {tab === 'poids' && <Poids />}
-          {tab === 'bouffe' && <Bouffe />}
+          {tab === 'bouffe' && <Bouffe onNavigate={setTab} />}
           {tab === 'perf' && <Perf />}
-          {tab !== 'jour' && tab !== 'data' && tab !== 'poids' && tab !== 'bouffe' && tab !== 'perf' && (
-            <Placeholder tab={tab} />
-          )}
         </div>
 
-        {/* ── Tab bar ─────────────────────────────────────────────── */}
+        {/* ── Tab bar (5 onglets : Journal promu, Chat retiré — D26) ── */}
         <div
           className="flex items-center justify-around px-2 pt-2 pb-5 border-t"
           style={{ background: C.bg, borderColor: C.line }}
         >
           <TabBtn icon={Sun} label="Jour" id="jour" tab={tab} set={setTab} />
+          <TabBtn icon={NotebookText} label="Journal" id="journal" tab={tab} set={setTab} />
           <TabBtn icon={Plus} label="Bouffe" id="bouffe" tab={tab} set={setTab} />
-          <TabBtn icon={Scale} label="Poids" id="poids" tab={tab} set={setTab} />
           <TabBtn icon={Dumbbell} label="Perf" id="perf" tab={tab} set={setTab} />
-          <TabBtn icon={MessageCircle} label="Chat" id="chat" tab={tab} set={setTab} />
+          <TabBtn icon={Scale} label="Poids" id="poids" tab={tab} set={setTab} />
         </div>
       </>
     </Shell>
@@ -108,20 +107,6 @@ function Shell({ children }) {
         style={{ background: C.bg, color: C.text, borderColor: C.line }}
       >
         {children}
-      </div>
-    </div>
-  )
-}
-
-const LABELS = { chat: 'Chat repas' }
-const PHASES = { chat: 3 }
-
-function Placeholder({ tab }) {
-  return (
-    <div className="px-5 py-20 text-center" style={{ color: C.faint }}>
-      <div className="text-[13px] uppercase tracking-[0.16em] mb-1">{LABELS[tab]}</div>
-      <div className="text-[12px]" style={{ color: C.muted }}>
-        Écran à construire en Phase {PHASES[tab]}
       </div>
     </div>
   )

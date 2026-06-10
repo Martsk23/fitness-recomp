@@ -7,9 +7,6 @@ import {
   updateIngredient,
   deleteIngredient,
   saveMeal,
-  loadDayEntries,
-  updateEntryGrams,
-  deleteEntry,
   lineMacros,
   composeTotals,
   distinctCategories,
@@ -25,18 +22,17 @@ import { loadDrinks, logDrink, addDrink, updateDrink, deleteDrink } from '../lib
 const parseNum = (s) => Number(String(s).replace(',', '.').trim())
 const GI_LABEL = { low: 'IG bas', mid: 'IG modéré', high: 'IG haut' }
 
-export default function Bouffe() {
-  const [view, setView] = useState('composer') // composer | journal | biblio | recettes | boissons
+export default function Bouffe({ onNavigate }) {
+  // Journal promu en onglet nav principal (D26) → Bouffe ne possède plus le journal
+  // du jour ni son chargement : composer/recettes/boissons écrivent dans
+  // journalEntries, l'écran Journal (monté à l'ouverture de l'onglet) les relit.
+  const [view, setView] = useState('composer') // composer | biblio | recettes | boissons
   const [ingredients, setIngredients] = useState(null)
-  const [entries, setEntries] = useState([])
   const [recipes, setRecipes] = useState([])
   const [drinks, setDrinks] = useState([])
 
   async function reloadIngredients() {
     setIngredients(await loadIngredients())
-  }
-  async function reloadEntries() {
-    setEntries(await loadDayEntries())
   }
   async function reloadRecipes() {
     setRecipes(await loadRecipes())
@@ -47,10 +43,9 @@ export default function Bouffe() {
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const [ings, ents, recs, drks] = await Promise.all([loadIngredients(), loadDayEntries(), loadRecipes(), loadDrinks()])
+      const [ings, recs, drks] = await Promise.all([loadIngredients(), loadRecipes(), loadDrinks()])
       if (!alive) return
       setIngredients(ings)
-      setEntries(ents)
       setRecipes(recs)
       setDrinks(drks)
     })()
@@ -63,34 +58,26 @@ export default function Bouffe() {
 
   return (
     <div className="px-5 pb-4">
-      {/* Sélecteur de sous-vue (5 onglets : texte verbatim → smokes intacts) */}
+      {/* Sélecteur de sous-vue (4 onglets : Journal promu en nav principale, D26) */}
       <div className="flex gap-1 mt-2 mb-4 p-1 rounded-xl" style={{ background: C.surface }}>
         <SubTab id="composer" label="Composer" view={view} set={setView} />
-        <SubTab id="journal" label="Journal" view={view} set={setView} />
         <SubTab id="biblio" label="Bibliothèque" view={view} set={setView} />
         <SubTab id="recettes" label="Recettes" view={view} set={setView} />
         <SubTab id="boissons" label="Boissons" view={view} set={setView} />
       </div>
 
       {view === 'composer' && (
-        <Composer
-          ingredients={ingredients}
-          onSaved={async () => {
-            await reloadEntries()
-            setView('journal')
-          }}
-          onRecipeSaved={reloadRecipes}
-        />
+        // Enregistrer un repas → on va le voir dans l'onglet Journal (promu nav, D26).
+        <Composer ingredients={ingredients} onSaved={() => onNavigate?.('journal')} onRecipeSaved={reloadRecipes} />
       )}
-      {view === 'journal' && <Journal entries={entries} onChange={reloadEntries} />}
       {view === 'biblio' && <Library ingredients={ingredients} onChange={reloadIngredients} />}
       {view === 'recettes' && (
-        // onApplied ne bascule PAS vers Journal : on reste sur Recettes pour que
-        // le bandeau de retour (succès / avertissement lignes mortes) reste visible.
-        // Le journal est rafraîchi en fond (l'onglet Journal le montrera à jour).
-        <Recipes recipes={recipes} onChange={reloadRecipes} onApplied={reloadEntries} />
+        // Rappeler ne navigue PAS : on reste sur Recettes pour garder le bandeau de
+        // retour (succès / avertissement lignes mortes) visible. Le journal du jour
+        // (onglet séparé) relit journalEntries à sa prochaine ouverture.
+        <Recipes recipes={recipes} onChange={reloadRecipes} />
       )}
-      {view === 'boissons' && <Drinks drinks={drinks} onChange={reloadDrinks} onLogged={reloadEntries} />}
+      {view === 'boissons' && <Drinks drinks={drinks} onChange={reloadDrinks} />}
     </div>
   )
 }
@@ -361,102 +348,9 @@ function MacroTotals({ totals }) {
   )
 }
 
-// ── (c) Journal du jour : édition (regrammage) / suppression ───────
-function Journal({ entries, onChange }) {
-  if (!entries.length) {
-    return <EmptyHint icon={UtensilsCrossed} text="Aucun repas enregistré aujourd'hui." />
-  }
-  const dayKcal = entries.reduce((a, e) => a + (e.kcal || 0), 0)
-  return (
-    <div>
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
-          Repas du jour
-        </span>
-        <span className="text-[13px] font-semibold" style={{ color: C.text, ...num }}>
-          {Math.round(dayKcal)} kcal
-        </span>
-      </div>
-      <div className="space-y-2">
-        {entries.map((e) => (
-          <JournalRow key={e.id} entry={e} onChange={onChange} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function JournalRow({ entry, onChange }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
-
-  async function save() {
-    const g = parseNum(draft)
-    if (!Number.isFinite(g) || g <= 0) return
-    await updateEntryGrams(entry.id, g)
-    setEditing(false)
-    await onChange()
-  }
-  async function remove() {
-    await deleteEntry(entry.id)
-    await onChange()
-  }
-
-  return (
-    <div className="rounded-xl px-3.5 py-2.5 border" style={{ background: C.surface, borderColor: C.line }}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-[13.5px] font-medium truncate" style={{ color: C.text }}>
-            {entry.nameSnapshot}
-          </div>
-          <div className="text-[11.5px]" style={{ color: C.faint, ...num }}>
-            {entry.grams} g · {entry.kcal} kcal · P {entry.protein} / G {entry.carb} / L {entry.fat}
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {editing ? (
-            <>
-              <input
-                inputMode="decimal"
-                aria-label={`Nouveau grammage ${entry.nameSnapshot}`}
-                value={draft}
-                onChange={(ev) => setDraft(ev.target.value)}
-                onKeyDown={(ev) => ev.key === 'Enter' && save()}
-                placeholder="g"
-                className="w-16 text-right rounded-lg px-2 py-1 text-[13px] border tabular-nums"
-                style={{ background: C.surfaceHi, borderColor: C.line, color: C.text }}
-              />
-              <button type="button" onClick={save} aria-label="Valider le grammage" className="p-1.5 active:scale-90" style={{ color: C.energy }}>
-                <Check size={16} />
-              </button>
-              <button type="button" onClick={() => setEditing(false)} aria-label="Annuler" className="p-1.5 active:scale-90" style={{ color: C.faint }}>
-                <X size={16} />
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditing(true)
-                  setDraft(String(entry.grams))
-                }}
-                aria-label={`Modifier ${entry.nameSnapshot}`}
-                className="p-1.5 active:scale-90"
-                style={{ color: C.faint }}
-              >
-                <Pencil size={15} />
-              </button>
-              <button type="button" onClick={remove} aria-label={`Supprimer ${entry.nameSnapshot}`} className="p-1.5 active:scale-90" style={{ color: C.faint }}>
-                <Trash2 size={15} />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
+// Le journal du jour (édition/suppression) vit désormais dans src/screens/Journal.jsx
+// (onglet nav principal, D26). Composer/Recettes/Boissons écrivent dans
+// journalEntries ; l'écran Journal les relit à son ouverture.
 
 // ── (a) Bibliothèque d'ingrédients : recherche + filtre + CRUD ─────
 function Library({ ingredients, onChange }) {
@@ -786,7 +680,7 @@ function RecipeRow({ recipe, onChange, onApplied, setFeedback }) {
     } else {
       setFeedback({ kind: 'ok', text: `« ${recipe.name} » → ${addedTxt}` })
     }
-    if (added > 0) await onApplied()
+    if (added > 0) await onApplied?.()
   }
   async function saveRename() {
     const n = draft.trim()
@@ -889,7 +783,7 @@ function Drinks({ drinks, onChange, onLogged }) {
   async function logOne(drink, count) {
     await logDrink(drink, count)
     setNote(`${drink.name} ×${count} ajouté au journal.`)
-    await onLogged()
+    await onLogged?.()
   }
 
   return (
