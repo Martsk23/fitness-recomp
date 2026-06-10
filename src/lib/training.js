@@ -1,5 +1,6 @@
 import { db, newRow } from '../db.js'
 import { todayKey } from '../ui.js'
+import { isWarmupWorkout } from './strongImport.js'
 
 // ── Contexte « séance ce jour » (Phase 2, D21) ─────────────────────
 // Table dédiée `trainingDays` : { id, date, updatedAt }, 1 ligne par date,
@@ -34,4 +35,21 @@ export async function setTraining(trained, date = todayKey()) {
 export async function clearTraining(date = todayKey()) {
   const existing = await db.trainingDays.where('date').equals(date).first()
   if (existing) await db.trainingDays.delete(existing.id)
+}
+
+// ── Réconciliation `trainingDays` vs `workouts` (D21 → tranchée D22) ──
+// SEAM UNIQUE : `trained` (pour la règle d'alerte B, glycemic.js) = présence d'une
+// séance MANUELLE (trainingDays) OU d'une séance IMPORTÉE RÉELLE ce jour-là.
+// Option C : une séance importée purement échauffement/étirement (denylist
+// strongImport.js) NE compte PAS — un jour de mobilité pure ≈ jour de repos, donc
+// l'alerte haut-IG doit rester active. Le toggle manuel prime toujours pour activer.
+// Aucune autre expression de précédence « trained » ailleurs dans l'app.
+export function effectiveTrained({ manualPresent = false, importedWorkouts = [] } = {}) {
+  if (manualPresent) return true
+  return importedWorkouts.some((w) => !isWarmupWorkout(w.name))
+}
+
+/** Séances importées (workouts) pour une date — sert le seam effectiveTrained. */
+export async function loadDayWorkouts(date = todayKey()) {
+  return db.workouts.where('date').equals(date).toArray()
 }

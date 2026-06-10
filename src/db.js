@@ -7,15 +7,16 @@ import Dexie from 'dexie'
 // Deux constantes DISTINCTES :
 //  - DEXIE_VERSION  : version du store IndexedDB (mécanique Dexie).
 //  - SCHEMA_VERSION : version du format d'export JSON (compat backups).
-export const DEXIE_VERSION = 6
+export const DEXIE_VERSION = 7
 // Première version à PK UUID. À partir d'elle, les montées de version sont
 // ADDITIVES (nouveau store / index) → Dexie les applique sans wipe. Le wipe
 // destructif (D13) est réservé aux bases ANTÉRIEURES (v1, PK auto-incrément).
 export const FIRST_UUID_DEXIE_VERSION = 2
 // SCHEMA_VERSION reste à 2 : l'ajout des tables `dailyExpenditure` (v3),
-// `dailyIntake` (v4), `recipes` (v5) puis `trainingDays` (v6) est rétro-compatible
-// à l'import (table absente d'un vieux bundle ⇒ vide). Pas de rupture du format →
-// on NE bumpe PAS (un bump rejetterait les backups v2). Tolérance prouvée par S6.
+// `dailyIntake` (v4), `recipes` (v5), `trainingDays` (v6) puis l'index `&strongKey`
+// sur `workouts` (v7, import Strong/D22) est rétro-compatible à l'import (table/champ
+// absent d'un vieux bundle ⇒ vide/ignoré). Pas de rupture du format → on NE bumpe PAS
+// (un bump rejetterait les backups v2). Tolérance prouvée par S6.
 export const SCHEMA_VERSION = 2
 
 // settings est un singleton → clé sentinelle fixe (lecture déterministe).
@@ -76,6 +77,20 @@ db.version(DEXIE_VERSION).stores({
 // Delta-only : on ne redéclare PAS les stores existants (Dexie fusionne).
 db.version(DEXIE_VERSION).stores({
   trainingDays: 'id, &date', // index UNIQUE &date : verrou « 1 ligne/date »
+})
+
+// v7 — montée ADDITIVE (Phase 2, import Strong/D22) : on AJOUTE l'index unique
+// `&strongKey` au store EXISTANT `workouts` (≠ nouveau store). `strongKey` = le
+// timestamp Date brut de l'export Strong (identité naturelle d'une séance) → verrou
+// structurel d'idempotence : ré-importer le même fichier ne peut PAS dupliquer une
+// séance (calque `dailyExpenditure &date`). Dexie FUSIONNE les `.stores()` d'une
+// même version : redéclarer `workouts` ici avec sa liste d'index complète remplace
+// la déclaration de base ('id, date') — pas un store en double. Additive (D16) →
+// aucune base existante wipée ; `workouts` est vide sur device (jamais d'import
+// Strong avant ce lot) → re-indexation triviale. Préservation prouvée par S10.
+// `sets` inchangé (index [exercise+date] existant suffit à l'analyse perf future).
+db.version(DEXIE_VERSION).stores({
+  workouts: 'id, date, &strongKey',
 })
 
 // Source unique de vérité pour l'export/import. Garder synchronisé avec stores().

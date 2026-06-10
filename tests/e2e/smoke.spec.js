@@ -658,6 +658,67 @@ test('recettes dégradé : ingrédient référencé supprimé → ligne sautée 
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('import Strong : CSV réel → rapport (28 séances / 504 sets / 504 Minuteur) → ré-import 0 doublon → reload persiste', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Onglet Perf → import du CSV Strong RÉEL (la fixture committée).
+  await page.getByRole('button', { name: 'Perf' }).click()
+  await page.getByText('Import Strong').waitFor()
+  await page.setInputFiles('input[aria-label="Importer un fichier CSV Strong"]', 'tests/fixtures/strong-export-reel.csv')
+
+  // Rapport d'import : 28 séances, 504 séries, 504 lignes « Minuteur de repos » filtrées.
+  const reportEl = page.getByTestId('import-report')
+  await expect(reportEl).toBeVisible()
+  await expect(reportEl).toContainText('28')
+  await expect(reportEl).toContainText('séance')
+  await expect(reportEl).toContainText('504')
+  await expect(reportEl).toContainText('Minuteur de repos')
+
+  // Le log liste les 28 séances.
+  await expect(page.getByText('Séances (28)')).toBeVisible()
+
+  // En base : 28 workouts, 504 sets.
+  const counts = async () =>
+    page.evaluate(async () => {
+      const open = indexedDB.open('fitnessRecomp')
+      const idb = await new Promise((res, rej) => {
+        open.onsuccess = () => res(open.result)
+        open.onerror = () => rej(open.error)
+      })
+      const count = (store) =>
+        new Promise((res, rej) => {
+          const req = idb.transaction(store, 'readonly').objectStore(store).count()
+          req.onsuccess = () => res(req.result)
+          req.onerror = () => rej(req.error)
+        })
+      const w = await count('workouts')
+      const s = await count('sets')
+      idb.close()
+      return { w, s }
+    })
+  expect(await counts()).toEqual({ w: 28, s: 504 })
+
+  // RÉ-IMPORT du MÊME fichier → idempotence : 0 ajoutée, 28 déjà importées.
+  await page.setInputFiles('input[aria-label="Importer un fichier CSV Strong"]', 'tests/fixtures/strong-export-reel.csv')
+  await expect(page.getByTestId('import-report')).toContainText('déjà importée')
+  await expect(page.getByText('Séances (28)')).toBeVisible()
+  expect(await counts()).toEqual({ w: 28, s: 504 }) // toujours pas de doublon
+
+  // Persistance réelle : reload (IndexedDB) → les 28 séances survivent + détail consultable.
+  await page.reload()
+  await page.getByRole('button', { name: 'Perf' }).click()
+  await expect(page.getByText('Séances (28)')).toBeVisible()
+  // Ouvre une séance → détail (exos/séries) rendu.
+  await page.getByRole('button', { name: /Détail séance/ }).first().click()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)

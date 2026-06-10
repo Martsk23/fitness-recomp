@@ -62,6 +62,13 @@ const V5_STORES = {
   recipes: 'id, name',
 }
 
+// Schéma v6 EXACT = v5 + trainingDays. Sert à fabriquer une base v6 réelle pour
+// prouver l'upgrade additif v6→v7 (AJOUT de l'index &strongKey sur workouts, D22).
+const V6_STORES = {
+  ...V5_STORES,
+  trainingDays: 'id, &date',
+}
+
 async function wipeAll() {
   if (db.isOpen()) db.close()
   await Dexie.delete('fitnessRecomp')
@@ -386,6 +393,52 @@ async function s9_v5_to_v6() {
   if (db.isOpen()) db.close()
 }
 
+// ── S10 — Base v6 RÉELLE → bump v7 = upgrade ADDITIF (PAS de wipe) ──
+// Même garde-fou que S5/S7/S8/S9, un cran plus loin (D22) : un device déjà en v6
+// ne doit PAS être wipé par le bump « import Strong ». Ici la montée AJOUTE un
+// index (`&strongKey`) au store EXISTANT `workouts` (≠ nouveau store) : Dexie
+// ré-indexe sans perdre de données, et un workout v6 SANS strongKey survit (l'index
+// unique n'astreint que les valeurs présentes). PORTE DURE avant déploiement device.
+async function s10_v6_to_v7() {
+  console.log('\n— S10 : upgrade additif v6 → v7 (ajout index &strongKey, préservation) —')
+  await wipeAll()
+
+  // Fabrique une base v6 réelle (PK UUID, version Dexie 6, workouts SANS strongKey).
+  const v6 = new Dexie('fitnessRecomp')
+  v6.version(6).stores(V6_STORES)
+  await v6.open()
+  ok(v6.verno === 6, 'base fabriquée en version Dexie 6')
+  await v6.settings.add({ id: SETTINGS_KEY, profile: null, targetsSource: 'fallback', targetSugarsSimple: 20, librarySeededV1: true, updatedAt: Date.now() })
+  const wId = crypto.randomUUID()
+  await v6.workouts.add({ id: wId, date: '2026-06-08', name: 'Push', source: 'manual', updatedAt: Date.now() }) // pas de strongKey
+  await v6.sets.add({ id: crypto.randomUUID(), workoutId: wId, date: '2026-06-08', exercise: 'Bench', setIndex: 1, reps: 8, weightKg: 60, updatedAt: Date.now() })
+  v6.close()
+
+  // migrate ne doit PAS wiper : v6 ≥ FIRST_UUID → 'dexie-upgrade'.
+  const r = await migrateLegacyIfNeeded()
+  ok(r.migrated === false && r.reason === 'dexie-upgrade', 'base v6 → PAS de wipe (upgrade additif Dexie)')
+  ok((await getMigrationBackups()).length === 0, 'aucun backup de wipe créé (rien wipé)')
+
+  // db.open() applique version(7) → ajoute l'index &strongKey, préserve les données.
+  await db.open()
+  ok(db.verno >= 7, 'base montée en version Dexie ≥ 7')
+  ok((await db.workouts.count()) === 1, 'DONNÉES PRÉSERVÉES : le workout v6 (sans strongKey) survit')
+  ok((await db.sets.count()) === 1, 'DONNÉES PRÉSERVÉES : la série v6 survit')
+  const idx = db.table('workouts').schema.indexes
+  ok(idx.some((i) => i.name === 'strongKey' && i.unique), 'index &strongKey (unique) bien présent sur workouts')
+  // Le verrou d'unicité fonctionne : deux workouts au MÊME strongKey → 2e rejeté.
+  const sk = '2026-06-09 10:00:00'
+  await db.workouts.add({ id: crypto.randomUUID(), date: '2026-06-09', strongKey: sk, name: 'A', source: 'strong-import', updatedAt: Date.now() })
+  let threw = false
+  try {
+    await db.workouts.add({ id: crypto.randomUUID(), date: '2026-06-09', strongKey: sk, name: 'B', source: 'strong-import', updatedAt: Date.now() })
+  } catch {
+    threw = true
+  }
+  ok(threw, 'index unique &strongKey : 2e workout au même strongKey REJETÉ (verrou idempotence)')
+  if (db.isOpen()) db.close()
+}
+
 async function main() {
   await s1_fresh()
   await s2_legacy()
@@ -396,6 +449,7 @@ async function main() {
   await s7_v3_to_v4()
   await s8_v4_to_v5()
   await s9_v5_to_v6()
+  await s10_v6_to_v7()
   if (db.isOpen()) db.close()
   console.log(`\n${exitCode === 0 ? 'TOUS LES TESTS PASSENT' : 'ÉCHECS DÉTECTÉS'}`)
   process.exit(exitCode)

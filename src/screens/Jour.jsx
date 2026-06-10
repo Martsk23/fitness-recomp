@@ -6,7 +6,7 @@ import { trend, shouldWeighNow } from '../lib/weight.js'
 import { loadActiveConfigs, loadStates, setValue, nextValue } from '../lib/tickers.js'
 import { loadExpenditure, setExpenditure, clearExpenditure, energyBalance } from '../lib/expenditure.js'
 import { loadIntake, setIntake, clearIntake, effectiveConsumed } from '../lib/intake.js'
-import { loadTraining, setTraining } from '../lib/training.js'
+import { loadTraining, setTraining, loadDayWorkouts, effectiveTrained } from '../lib/training.js'
 import { glycemicShares, evaluateGlycemicAlerts } from '../lib/glycemic.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
@@ -20,8 +20,12 @@ export default function Jour() {
   const [weight, setWeight] = useState({ today: null, t: { direction: 'flat', deltaKg: 0 } })
   // Consommé total saisi à la main : undefined = chargement · null = non saisi · nombre = kcal.
   const [manualIntake, setManualIntake] = useState(undefined)
-  // Séance du jour (Phase 2, D21) : undefined = chargement · bool = séance/repos.
+  // Séance du jour (Phase 2, D21) : undefined = chargement · bool = séance MANUELLE
+  // (ce que pilote le toggle). Le `trained` EFFECTIF (alerte B) combine manuel +
+  // séances importées via le seam effectiveTrained (D22).
   const [trained, setTrained] = useState(undefined)
+  // Séances importées (Strong) du jour → réconciliation D22 (jamais saisi ici).
+  const [dayWorkouts, setDayWorkouts] = useState([])
   // Composition glucidique du journal du jour (dérivée, jamais stockée).
   const [glyc, setGlyc] = useState(null)
 
@@ -33,6 +37,7 @@ export default function Jour() {
       const logs = await db.weightLogs.orderBy('datetime').toArray()
       const intake = await loadIntake()
       const isTrained = await loadTraining()
+      const workoutsToday = await loadDayWorkouts()
       if (!alive) return
       const todayLogs = logs.filter((l) => l.date === todayKey())
       setWeight({
@@ -54,6 +59,7 @@ export default function Jour() {
       setEntryCount(entries.length)
       setManualIntake(intake)
       setTrained(isTrained)
+      setDayWorkouts(workoutsToday)
       setGlyc(glycemicShares(entries))
     })()
     return () => {
@@ -90,8 +96,12 @@ export default function Jour() {
   // (à 0 entrée le détail macros est inconnu, cf. consumedFromManual). Les seuils
   // ne vivent QUE dans evaluateGlycemicAlerts (seam unique).
   const glycActive = entryCount > 0 && glyc != null
+  // `trained` EFFECTIF (D22, seam unique) : toggle manuel OU séance importée réelle
+  // du jour. La règle B (haut-IG jour de repos) s'appuie là-dessus, pas sur le seul
+  // toggle. Le toggle reste l'override manuel (pilote `trained`).
+  const trainedEffective = effectiveTrained({ manualPresent: trained, importedWorkouts: dayWorkouts })
   const alerts = glycActive
-    ? evaluateGlycemicAlerts({ sugars: consumed.s, sugarsTarget: settings.targetSugarsSimple, shares: glyc, trained })
+    ? evaluateGlycemicAlerts({ sugars: consumed.s, sugarsTarget: settings.targetSugarsSimple, shares: glyc, trained: trainedEffective })
     : []
 
   async function clearManualIntake() {
