@@ -66,13 +66,21 @@ export default function Jour() {
   }
 
   const targetKcal = settings.targetKcal
-  // Consommé effectif : total manuel s'il est saisi, sinon somme du journal
-  // (seam unique D17). Quand il vient du total manuel, le détail macros est
-  // inconnu → affiché « non renseigné » plutôt que des zéros trompeurs.
-  const consumedKcal = effectiveConsumed(manualIntake, consumed.kcal)
-  const consumedFromManual = manualIntake != null
+  // Consommé effectif (D20, seam unique) : le journal prime dès ≥1 entrée, le total
+  // manuel n'est qu'un fallback à 0 entrée. consumedFromManual est vrai SEULEMENT
+  // dans ce cas fallback → c'est là que le détail macros est inconnu (« — »).
+  const consumedKcal = effectiveConsumed(manualIntake, consumed.kcal, entryCount)
+  const consumedFromManual = entryCount === 0 && manualIntake != null
+  // Un total manuel résiduel existe mais le journal prime → on le signale + on offre
+  // l'effacement (réutilise clearIntake, l'affordance existante). Pas de nouvel état.
+  const manualOverridden = manualIntake != null && entryCount > 0
   const remaining = Math.round(targetKcal - consumedKcal)
   const pct = Math.min(100, (consumedKcal / targetKcal) * 100)
+
+  async function clearManualIntake() {
+    await clearIntake()
+    setManualIntake(null)
+  }
 
   return (
     <div className="px-5 pb-4">
@@ -98,6 +106,19 @@ export default function Jour() {
               <TrendingDown size={12} style={{ color: C.energy }} /> objectif {targetKcal}
             </span>
           </div>
+          {manualOverridden && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]" style={{ color: C.faint }}>
+              <span style={num}>Total manuel ({manualIntake} kcal) saisi — le journal prime.</span>
+              <button
+                type="button"
+                onClick={clearManualIntake}
+                className="underline active:scale-95 transition"
+                style={{ color: C.muted }}
+              >
+                Effacer le total manuel
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -159,7 +180,6 @@ export default function Jour() {
         consumedKcal={consumedKcal}
         tracked={entryCount > 0 || consumedFromManual}
         manualIntake={manualIntake}
-        journalSum={consumed.kcal}
         entryCount={entryCount}
         onIntakeChange={setManualIntake}
       />
@@ -276,7 +296,7 @@ function WeightCard({ today, t }) {
 // stockée dans `dailyExpenditure` ; absence = non saisi. Le bilan est CALCULÉ.
 // Tant que la nutrition n'est pas implémentée (journal vide), on affiche un
 // état honnête côté consommé plutôt qu'un faux déficit.
-function Bilan({ consumedKcal, tracked, manualIntake, journalSum, entryCount, onIntakeChange }) {
+function Bilan({ consumedKcal, tracked, manualIntake, entryCount, onIntakeChange }) {
   const [exp, setExp] = useState(undefined) // undefined = chargement · null = non saisi · nombre = kcal
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -381,12 +401,12 @@ function Bilan({ consumedKcal, tracked, manualIntake, journalSum, entryCount, on
         )}
       </div>
 
-      {/* Consommé : saisie rapide du TOTAL du jour (1 nombre, calque de la Dépense).
-          Total manuel prime ; sinon somme du journal tant que la nutrition n'est
-          pas là (seam D17, provisoire). Absence = non saisi. */}
+      {/* Consommé (D20) : le journal prime dès ≥1 entrée (lecture seule « (repas) ») ;
+          à 0 entrée, saisie rapide du TOTAL manuel (calque de la Dépense). La valeur
+          effective vient de Jour() (effectiveConsumed) — ConsumedRow n'arbitre rien. */}
       <ConsumedRow
-        value={manualIntake}
-        journalSum={journalSum}
+        consumedKcal={consumedKcal}
+        manualValue={manualIntake}
         entryCount={entryCount}
         onSave={saveIntake}
         onClear={clearIntakeValue}
@@ -433,11 +453,15 @@ function Bilan({ consumedKcal, tracked, manualIntake, journalSum, entryCount, on
 }
 
 // ── Consommé du jour : saisie rapide du total kcal (calque de la Dépense) ──
-// 1 nombre, pas de macros. Le total manuel prime sur la somme du journal tant
-// que la nutrition n'a pas de saisie (seam D17, provisoire). Absence = non saisi.
-// `value` est déjà résolu (Jour attend la fin du chargement avant de monter).
-function ConsumedRow({ value, journalSum, entryCount, onSave, onClear }) {
-  const [editing, setEditing] = useState(value == null && entryCount === 0)
+// AFFICHAGE PUR : la valeur effective (`consumedKcal`) et la précédence sont
+// calculées UNE SEULE FOIS dans Jour() via effectiveConsumed (D20). Ici on se
+// contente d'afficher et, à 0 entrée seulement, d'éditer le total manuel.
+//   - entryCount > 0 → le journal prime : lecture seule, suffixe « (repas) », pas
+//     d'édition (effacer un manuel résiduel se fait sur le héro, D20 point C).
+//   - entryCount = 0 → saisie/édition du total manuel (cas saisie rapide post-séance).
+function ConsumedRow({ consumedKcal, manualValue, entryCount, onSave, onClear }) {
+  const journalPrimes = entryCount > 0
+  const [editing, setEditing] = useState(!journalPrimes && manualValue == null)
   const [draft, setDraft] = useState('')
 
   async function save() {
@@ -454,9 +478,20 @@ function ConsumedRow({ value, journalSum, entryCount, onSave, onClear }) {
     await onClear()
   }
 
-  // Hors édition : total manuel si saisi, sinon somme du journal (fallback).
-  const fallbackToJournal = value == null && entryCount > 0
-  const shown = value != null ? value : Math.round(journalSum || 0)
+  // Journal prioritaire : lecture seule, jamais le total manuel résiduel.
+  if (journalPrimes) {
+    return (
+      <div className="mt-2.5 flex items-center justify-between text-[13px]">
+        <span style={{ color: C.muted }}>Consommé</span>
+        <span className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: C.text }}>
+          <span data-testid="consumed-value" style={num}>
+            {Math.round(consumedKcal)}
+          </span>
+          <span style={{ color: C.faint }}>kcal (repas)</span>
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div className="mt-2.5">
@@ -490,19 +525,19 @@ function ConsumedRow({ value, journalSum, entryCount, onSave, onClear }) {
             aria-label="Modifier le consommé du jour"
             onClick={() => {
               setEditing(true)
-              setDraft(value != null ? String(value) : '')
+              setDraft(manualValue != null ? String(manualValue) : '')
             }}
             className="flex items-center gap-1.5 text-[13px] font-semibold active:scale-95 transition"
             style={{ color: C.text }}
           >
             <span data-testid="consumed-value" style={num}>
-              {shown}
+              {Math.round(consumedKcal)}
             </span>
-            <span style={{ color: C.faint }}>kcal{fallbackToJournal ? ' (repas)' : ''}</span>
+            <span style={{ color: C.faint }}>kcal</span>
           </button>
         )}
       </div>
-      {value != null && !editing && (
+      {manualValue != null && !editing && (
         <button type="button" onClick={clear} className="mt-1 text-[11px]" style={{ color: C.faint }}>
           Effacer le consommé du jour
         </button>

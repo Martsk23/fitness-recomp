@@ -251,6 +251,63 @@ test('consommé rapide : total manuel saisi → bilan, persistance, 1 ligne/date
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('D20 : journal prime sur le total manuel dès ≥1 entrée (héro + Bilan), effacer le total manuel', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // On injecte EN MÊME TEMPS un repas au journal (600 kcal) ET un total manuel
+  // résiduel (dailyIntake 2100) pour aujourd'hui → sous D20 le journal doit primer.
+  const tKey = dayKey(new Date())
+  await page.evaluate(async (tdate) => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    await new Promise((res, rej) => {
+      const tx = idb.transaction('journalEntries', 'readwrite')
+      tx.objectStore('journalEntries').put({
+        id: crypto.randomUUID(), date: tdate, sourceType: 'ingredient', sourceId: 'seed-test',
+        nameSnapshot: 'Repas test', grams: 100, kcal: 600, protein: 0, carb: 0, sugarsSimple: 0, fat: 0,
+        createdAt: Date.now(), loggedAt: Date.now(), updatedAt: Date.now(),
+      })
+      tx.oncomplete = () => res()
+      tx.onerror = () => rej(tx.error)
+    })
+    await new Promise((res, rej) => {
+      const tx = idb.transaction('dailyIntake', 'readwrite')
+      tx.objectStore('dailyIntake').put({ id: crypto.randomUUID(), date: tdate, kcal: 2100, updatedAt: Date.now() })
+      tx.oncomplete = () => res()
+      tx.onerror = () => rej(tx.error)
+    })
+    idb.close()
+  }, tKey)
+  await page.reload()
+
+  // HÉRO : le consommé montre le JOURNAL (600), pas le total manuel (2100).
+  await expect(page.getByText('600 mangé')).toBeVisible()
+  await expect(page.getByText('2100 mangé')).toHaveCount(0)
+  // Bandeau de visibilité : le total manuel résiduel est signalé comme ignoré.
+  await expect(page.getByText(/Total manuel \(2100 kcal\)/)).toBeVisible()
+  await expect(page.getByText(/le journal prime/)).toBeVisible()
+
+  // BILAN : la ligne Consommé montre AUSSI le journal « (repas) », pas 2100.
+  await expect(page.getByTestId('consumed-value')).toHaveText('600')
+  await expect(page.getByText('kcal (repas)')).toBeVisible()
+
+  // Effacer le total manuel (affordance du héro) → reste sur le journal (600), bandeau parti.
+  await page.getByRole('button', { name: 'Effacer le total manuel' }).click()
+  await expect(page.getByText(/le journal prime/)).toHaveCount(0)
+  await expect(page.getByText('600 mangé')).toBeVisible()
+  await expect(page.getByTestId('consumed-value')).toHaveText('600')
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('nutrition : seed parti via flag, plat pesé → kcal/macros corrects → reload → entrée conservée → consommé du Jour allumé', async ({ page }) => {
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))

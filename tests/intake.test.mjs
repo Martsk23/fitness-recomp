@@ -1,9 +1,9 @@
 // Test consommé rapide du jour (node + fake-indexeddb, sans navigateur).
-// Prouve : effectiveConsumed (seam D17) avec VERROU NULLISH (0 = total réel,
-// jamais traité comme absence), upsert sans doublon par date, ABSENCE = non
-// saisi (null), "autre date vierge", clear → retour non saisi, et le scénario
-// bilan demandé : pas de total → bilan = sommeJournal ; total 2100 → 2100 −
-// dépense ; clear → revient à sommeJournal.
+// Prouve : effectiveConsumed (seam D20) — le JOURNAL prime dès ≥1 entrée, le total
+// manuel n'est qu'un FALLBACK à 0 entrée ; VERROU NULLISH recadré (à 0 entrée, total
+// 0 = réel, jamais traité comme absence) ; upsert sans doublon par date, ABSENCE =
+// non saisi (null), "autre date vierge", clear → retour non saisi ; et le scénario
+// bilan : repas logués → journal prime ; aucun repas + total manuel → fallback.
 import 'fake-indexeddb/auto'
 import Dexie from 'dexie'
 import { db } from '../src/db.js'
@@ -22,27 +22,34 @@ async function wipeAll() {
   await Dexie.delete('fitnessRecomp')
 }
 
-// ── P — effectiveConsumed (pur) + VERROU NULLISH ───────────────────
+// ── P — effectiveConsumed (pur) : D20 + VERROU NULLISH recadré ──────
 function p_pure() {
-  console.log('\n— P : effectiveConsumed (seam D17, verrou nullish) —')
-  ok(effectiveConsumed(null, 600) === 600, 'pas de total manuel → somme du journal (600)')
-  ok(effectiveConsumed(2100, 600) === 2100, 'total manuel saisi → prime (2100, pas 600)')
-  ok(effectiveConsumed(undefined, 600) === 600, 'undefined → fallback journal (600)')
-  // LE VERROU : 0 est un total RÉEL, il prime ; il ne doit PAS retomber sur 600.
-  ok(effectiveConsumed(0, 600) === 0, 'VERROU NULLISH : total 0 = total réel → 0 (pas 600)')
-  ok(effectiveConsumed(null, 0) === 0, 'pas de total + journal vide → 0')
-  ok(effectiveConsumed(null, undefined) === 0, 'pas de total + journal absent → 0 (jamais NaN)')
+  console.log('\n— P : effectiveConsumed (seam D20, journal prioritaire) —')
+  // ≥1 entrée → le journal prime.
+  ok(effectiveConsumed(null, 600, 1) === 600, '≥1 entrée, pas de total → journal (600)')
+  // LE FLIP D20 : avec des entrées, le journal prime SUR le total manuel.
+  ok(effectiveConsumed(2100, 600, 1) === 600, 'D20 : journal prime sur le manuel dès ≥1 entrée (600, pas 2100)')
+  ok(effectiveConsumed(undefined, 600, 1) === 600, '≥1 entrée, manuel undefined → journal (600)')
+  // 0 entrée → le total manuel est le FALLBACK.
+  ok(effectiveConsumed(2100, 0, 0) === 2100, '0 entrée → total manuel = fallback (2100)')
+  // VERROU NULLISH recadré : à 0 entrée, 0 est un total RÉEL (≠ absence).
+  ok(effectiveConsumed(0, 600, 0) === 0, 'VERROU NULLISH (fallback) : 0 entrée, total 0 = réel → 0')
+  // …mais avec des entrées, même un manuel 0 est ignoré (journal prime).
+  ok(effectiveConsumed(0, 600, 1) === 600, '≥1 entrée : journal prime même si manuel 0 (600)')
+  ok(effectiveConsumed(null, 0, 0) === 0, '0 entrée, pas de total → 0')
+  ok(effectiveConsumed(null, undefined, 0) === 0, '0 entrée, journal absent → 0 (jamais NaN)')
 }
 
-// ── B — scénario bilan demandé (effectiveConsumed ∘ energyBalance) ──
+// ── B — scénario bilan (effectiveConsumed ∘ energyBalance) sous D20 ──
 function b_balance() {
   console.log('\n— B : bilan = consommé effectif − dépense —')
   const sumJournal = 600
   const depense = 2500
-  ok(energyBalance(effectiveConsumed(null, sumJournal), depense) === -1900, 'pas de total → bilan = sommeJournal − dépense (−1900)')
-  ok(energyBalance(effectiveConsumed(2100, sumJournal), depense) === -400, 'total 2100 → bilan = 2100 − dépense (−400)')
-  // clear = retour à manualTotal null → on revient à la somme du journal.
-  ok(energyBalance(effectiveConsumed(null, sumJournal), depense) === -1900, 'clear → revient à sommeJournal − dépense (−1900)')
+  // Repas logués (≥1 entrée) → le journal prime, le manuel résiduel est ignoré.
+  ok(energyBalance(effectiveConsumed(null, sumJournal, 1), depense) === -1900, '≥1 entrée, pas de total → journal − dépense (−1900)')
+  ok(energyBalance(effectiveConsumed(2100, sumJournal, 2), depense) === -1900, 'D20 : repas logués → journal prime, 2100 ignoré (−1900)')
+  // Aucun repas logué → le total manuel sert de fallback.
+  ok(energyBalance(effectiveConsumed(2100, 0, 0), depense) === -400, '0 entrée → total manuel fallback (2100 → −400)')
 }
 
 // ── D — consommé du jour en base (upsert sur date) ─────────────────
@@ -64,10 +71,11 @@ async function d_states() {
   await setIntake(2200, today)
   ok((await loadIntake(today)) === 2200 && (await db.dailyIntake.count()) === 1, 'ré-écriture même jour = update (toujours 1 ligne)')
 
-  // VERROU NULLISH en base : un total 0 saisi se relit 0 (pas null), et prime.
+  // VERROU NULLISH en base : un total 0 saisi se relit 0 (pas null). À 0 entrée,
+  // ce 0 est le fallback effectif (≠ non saisi).
   await setIntake(0, today)
   ok((await loadIntake(today)) === 0, 'total 0 saisi → relu 0 (≠ non saisi)')
-  ok(effectiveConsumed(await loadIntake(today), 600) === 0, 'total 0 en base → prime sur la somme journal (0, pas 600)')
+  ok(effectiveConsumed(await loadIntake(today), 600, 0) === 0, 'total 0 en base, 0 entrée → fallback = 0 (verrou nullish, pas 600)')
 
   // "autre date = vierge"
   ok((await loadIntake('2026-06-10')) === null, 'autre date : non saisi (null), aucune fuite')
@@ -77,13 +85,13 @@ async function d_states() {
   await Promise.all([setIntake(1800, day2), setIntake(1900, day2)])
   ok((await db.dailyIntake.where('date').equals(day2).count()) === 1, 'double write concurrent même date → 1 seule ligne')
 
-  // clear → retour à non saisi (null) → effectiveConsumed retombe sur le journal
+  // clear → retour à non saisi (null). Avec des entrées, le journal prime de toute façon.
   await clearIntake(today)
   ok(
     (await loadIntake(today)) === null && (await db.dailyIntake.where('date').equals(today).count()) === 0,
     'clear → non saisi + ligne du jour supprimée',
   )
-  ok(effectiveConsumed(await loadIntake(today), 600) === 600, 'après clear → revient à la somme du journal (600)')
+  ok(effectiveConsumed(await loadIntake(today), 600, 1) === 600, '≥1 entrée → journal (600)')
 
   if (db.isOpen()) db.close()
 }
