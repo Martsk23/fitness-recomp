@@ -308,6 +308,92 @@ test('D20 : journal prime sur le total manuel dès ≥1 entrée (héro + Bilan),
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('intelligence glucidique : compo IG du journal + alerte haut-IG jour de repos + toggle séance la coupe (persistée)', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Injecte 2 entrées du jour : 80 g de glucides haut-IG (+ 25 g de sucres) et 20 g
+  // bas-IG → totalCarb 100, highShare 0,8. Sucres 25 > cible 20. Jour de repos (pas
+  // de toggle séance) → les DEUX alertes (A sucres, B haut-IG repos) doivent sortir.
+  const tKey = dayKey(new Date())
+  await page.evaluate(async (tdate) => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const put = (e) =>
+      new Promise((res, rej) => {
+        const tx = idb.transaction('journalEntries', 'readwrite')
+        tx.objectStore('journalEntries').put(e)
+        tx.oncomplete = () => res()
+        tx.onerror = () => rej(tx.error)
+      })
+    await put({
+      id: crypto.randomUUID(), date: tdate, sourceType: 'ingredient', sourceId: 'seed-high',
+      nameSnapshot: 'Glucide rapide', grams: 100, kcal: 320, protein: 0, carb: 80, sugarsSimple: 25, fat: 0,
+      gi: 'high', createdAt: Date.now(), loggedAt: Date.now(), updatedAt: Date.now(),
+    })
+    await put({
+      id: crypto.randomUUID(), date: tdate, sourceType: 'ingredient', sourceId: 'seed-low',
+      nameSnapshot: 'Légume', grams: 100, kcal: 80, protein: 0, carb: 20, sugarsSimple: 0, fat: 0,
+      gi: 'low', createdAt: Date.now(), loggedAt: Date.now(), updatedAt: Date.now(),
+    })
+    idb.close()
+  }, tKey)
+  await page.reload()
+
+  // Composition glucidique : la part haut-IG = 80 %.
+  await expect(page.getByTestId('glyc-high')).toHaveText('80%')
+  await expect(page.getByTestId('glyc-low')).toHaveText('20%')
+
+  // Jour de repos → les deux alertes visibles.
+  await expect(page.getByTestId('alert-high-gi-rest')).toBeVisible()
+  await expect(page.getByTestId('alert-sugars-high')).toBeVisible()
+
+  // Marquer une séance → l'alerte B disparaît immédiatement, A reste (sucres).
+  const seance = page.getByTestId('seance-toggle')
+  await expect(seance).toHaveAttribute('aria-pressed', 'false')
+  await seance.click()
+  await expect(seance).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('alert-high-gi-rest')).toHaveCount(0)
+  await expect(page.getByTestId('alert-sugars-high')).toBeVisible()
+
+  // Persistance réelle : reload (IndexedDB) → séance conservée, B toujours coupée.
+  await page.reload()
+  await expect(page.getByTestId('seance-toggle')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('alert-high-gi-rest')).toHaveCount(0)
+
+  // Une seule ligne trainingDays, keyée par la date du jour.
+  const rows = await page.evaluate(async () => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const all = await new Promise((res, rej) => {
+      const req = idb.transaction('trainingDays', 'readonly').objectStore('trainingDays').getAll()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    idb.close()
+    return all
+  })
+  expect(rows.length).toBe(1)
+  expect(rows[0].date).toBe(tKey)
+
+  // Retirer la séance → l'alerte B revient (retour à « repos »).
+  await page.getByTestId('seance-toggle').click()
+  await expect(page.getByTestId('seance-toggle')).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByTestId('alert-high-gi-rest')).toBeVisible()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('nutrition : seed parti via flag, plat pesé → kcal/macros corrects → reload → entrée conservée → consommé du Jour allumé', async ({ page }) => {
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))

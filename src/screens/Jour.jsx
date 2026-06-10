@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot, Flame } from 'lucide-react'
+import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot, Flame, Dumbbell, Activity, AlertTriangle } from 'lucide-react'
 import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
 import { trend, shouldWeighNow } from '../lib/weight.js'
 import { loadActiveConfigs, loadStates, setValue, nextValue } from '../lib/tickers.js'
 import { loadExpenditure, setExpenditure, clearExpenditure, energyBalance } from '../lib/expenditure.js'
 import { loadIntake, setIntake, clearIntake, effectiveConsumed } from '../lib/intake.js'
+import { loadTraining, setTraining } from '../lib/training.js'
+import { glycemicShares, evaluateGlycemicAlerts } from '../lib/glycemic.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
@@ -18,6 +20,10 @@ export default function Jour() {
   const [weight, setWeight] = useState({ today: null, t: { direction: 'flat', deltaKg: 0 } })
   // Consommé total saisi à la main : undefined = chargement · null = non saisi · nombre = kcal.
   const [manualIntake, setManualIntake] = useState(undefined)
+  // Séance du jour (Phase 2, D21) : undefined = chargement · bool = séance/repos.
+  const [trained, setTrained] = useState(undefined)
+  // Composition glucidique du journal du jour (dérivée, jamais stockée).
+  const [glyc, setGlyc] = useState(null)
 
   useEffect(() => {
     let alive = true
@@ -26,6 +32,7 @@ export default function Jour() {
       const entries = await db.journalEntries.where('date').equals(todayKey()).toArray()
       const logs = await db.weightLogs.orderBy('datetime').toArray()
       const intake = await loadIntake()
+      const isTrained = await loadTraining()
       if (!alive) return
       const todayLogs = logs.filter((l) => l.date === todayKey())
       setWeight({
@@ -46,13 +53,15 @@ export default function Jour() {
       setConsumed(agg)
       setEntryCount(entries.length)
       setManualIntake(intake)
+      setTrained(isTrained)
+      setGlyc(glycemicShares(entries))
     })()
     return () => {
       alive = false
     }
   }, [])
 
-  if (!settings || manualIntake === undefined) return null
+  if (!settings || manualIntake === undefined || trained === undefined) return null
 
   // Fallback propre : tant que le profil n'a pas calculé de cibles, pas de budgets
   // faux ni de NaN. (En pratique l'onboarding gate déjà l'app — ceinture + bretelles.)
@@ -77,9 +86,24 @@ export default function Jour() {
   const remaining = Math.round(targetKcal - consumedKcal)
   const pct = Math.min(100, (consumedKcal / targetKcal) * 100)
 
+  // Analyse glucidique (D21) : dérivée du JOURNAL → uniquement quand ≥1 entrée
+  // (à 0 entrée le détail macros est inconnu, cf. consumedFromManual). Les seuils
+  // ne vivent QUE dans evaluateGlycemicAlerts (seam unique).
+  const glycActive = entryCount > 0 && glyc != null
+  const alerts = glycActive
+    ? evaluateGlycemicAlerts({ sugars: consumed.s, sugarsTarget: settings.targetSugarsSimple, shares: glyc, trained })
+    : []
+
   async function clearManualIntake() {
     await clearIntake()
     setManualIntake(null)
+  }
+
+  // Séance du jour : maj optimiste (retour tactile) puis persistance (D21).
+  async function toggleTraining() {
+    const next = !trained
+    setTrained(next)
+    await setTraining(next)
   }
 
   return (
@@ -174,6 +198,14 @@ export default function Jour() {
           Recomp · sucres simples &lt; {settings.targetSugarsSimple} g/jour
         </div>
       </div>
+
+      {/* Séance du jour (D21) : saisie explicite 1-tap. Absence = repos. Sert la
+          règle d'alerte B (haut-IG un jour de repos). Toujours visible (utile même
+          sans repas logué : marquer la séance avant de composer). */}
+      <SeanceToggle trained={trained} onToggle={toggleTraining} />
+
+      {/* Composition glucidique + alertes (dérivées du journal du jour, D21) */}
+      {glycActive && <GlycemicCard glyc={glyc} alerts={alerts} />}
 
       {/* Bilan énergétique : consommé − dépense totale du jour (saisie manuelle) */}
       <Bilan
@@ -652,6 +684,98 @@ function StepBtn({ label, onClick, disabled, children }) {
     >
       {children}
     </button>
+  )
+}
+
+// ── Séance du jour (toggle 1-tap) ──────────────────────────────────
+// Présence = séance, absence = repos (D21). Saisie explicite, pas d'inférence.
+function SeanceToggle({ trained, onToggle }) {
+  return (
+    <div className="mt-4 rounded-2xl p-3.5 border flex items-center justify-between" style={{ background: C.surface, borderColor: C.line }}>
+      <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: trained ? C.text : C.muted }}>
+        <Dumbbell size={16} style={{ color: trained ? C.energy : C.faint }} /> Séance aujourd'hui
+      </span>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label="Séance aujourd'hui"
+        aria-pressed={trained}
+        data-testid="seance-toggle"
+        className="px-3.5 py-1 rounded-full text-[12px] font-semibold border active:scale-95 transition"
+        style={{
+          background: trained ? C.energy : 'transparent',
+          borderColor: trained ? C.energy : C.line,
+          color: trained ? C.bg : C.faint,
+        }}
+      >
+        {trained ? 'Oui' : 'Repos'}
+      </button>
+    </div>
+  )
+}
+
+// ── Composition glucidique + alertes (D21) ─────────────────────────
+// Barre 3 segments (bas / modéré / haut IG) en % des GRAMMES de glucides du
+// journal + alertes contextuelles (sucres élevés, haut-IG jour de repos). Les
+// seuils sont calculés dans evaluateGlycemicAlerts (seam unique) — ici rien.
+function GlycemicCard({ glyc, alerts }) {
+  const hasCarb = glyc.totalCarb > 0
+  return (
+    <div className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+          Composition glucidique
+        </span>
+        <Activity size={14} style={{ color: C.carb }} />
+      </div>
+
+      {hasCarb ? (
+        <>
+          {/* Segments à l'échelle du total ; un résidu « non classé » laisse un creux. */}
+          <div className="h-2.5 rounded-full overflow-hidden flex" style={{ background: C.surfaceHi }}>
+            <div className="h-full transition-all" style={{ width: `${glyc.lowPct}%`, background: C.energy }} />
+            <div className="h-full transition-all" style={{ width: `${glyc.midPct}%`, background: C.carb }} />
+            <div className="h-full transition-all" style={{ width: `${glyc.highPct}%`, background: C.warn }} />
+          </div>
+          <div className="flex items-center gap-3 mt-2.5 text-[11.5px]" style={{ color: C.muted }}>
+            <GlyLegend color={C.energy} label="bas" pct={glyc.lowPct} testid="glyc-low" />
+            <GlyLegend color={C.carb} label="modéré" pct={glyc.midPct} testid="glyc-mid" />
+            <GlyLegend color={C.warn} label="haut" pct={glyc.highPct} testid="glyc-high" />
+          </div>
+        </>
+      ) : (
+        <div className="text-[12px]" style={{ color: C.faint }}>
+          Pas de glucides enregistrés aujourd'hui.
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="mt-3 pt-3 border-t space-y-1.5" style={{ borderColor: C.line }}>
+          {alerts.map((a) => (
+            <div
+              key={a.id}
+              data-testid={`alert-${a.id}`}
+              className="flex items-start gap-1.5 text-[12px] leading-snug"
+              style={{ color: C.warn }}
+            >
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {a.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GlyLegend({ color, label, pct, testid }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+      <span>{label}</span>
+      <span data-testid={testid} style={num} className="font-semibold" >
+        {Math.round(pct)}%
+      </span>
+    </span>
   )
 }
 

@@ -119,13 +119,23 @@ _Mis à jour à chaque fin de session pour reprise sans perte de contexte._
 
 **Vérifs** : `tests/intake.test.mjs` migré vers B ✅ (flip « journal prime ≥1 entrée » + « manuel fallback à 0 entrée » + **verrou nullish recadré**) · smoke Playwright **D20** ✅ (journal injecté 600 + manuel 2100 → **héro ET Bilan montrent 600** « (repas) », bandeau « le journal prime », effacement du total manuel → reste sur le journal) ; **12/12 smokes** (les 11 antérieurs restent verts — smoke consommé-rapide à 0 entrée → fallback inchangé) · 8 suites node vertes · `npm run lint`/`build` ✅. **Commit : _en attente du GO_.**
 
+### Phase 2 — Intelligence glucidique (lot 1, session du 10/06/2026)
+- `src/lib/glycemic.js` (pur, testable node) : `carbsByGi` (ventilation des **grammes de glucides** du journal par `gi`, bucket défensif `unknown` si IG manquant), `glycemicShares` (parts en % + `highShare`), `evaluateGlycemicAlerts` (**seam unique des seuils**, calque D20). **RÈGLE D21** : les grammes `unknown` comptent au **dénominateur** (`totalCarb`) mais **jamais au numérateur haut-IG** (`highShare = high/totalCarb`) → un gramme non classé dilue, ne gonfle jamais.
+- **2 règles d'alerte** (minimal, justifié) : **A** sucres simples `> targetSugarsSimple` (D15, borne stricte) ; **B** haut-IG un jour de repos (`!trained && totalCarb ≥ 50 g && highShare ≥ 0,50`). « Bas-IG insuffisant » **rejetée** (différée, D21).
+- `src/lib/training.js` (calque `expenditure.js`/`intake.js`) : table dédiée **`trainingDays`** (`{ id, date, updatedAt }`, **présence = séance, absence = repos**, untoggle = delete). `loadTraining`/`setTraining`/`clearTraining`, upsert atomique rw.
+- **Contrainte dure (table + export/import même tâche)** : `db.js` **`DEXIE_VERSION 5→6`** montée **ADDITIVE delta-only** (index unique `&date`) + `TABLES += 'trainingDays'` (D7). `SCHEMA_VERSION` gardé à **2**. `backup.js` intouché.
+- `src/screens/Jour.jsx` : chip **« Séance aujourd'hui »** (toggle 1-tap, optimiste + persistance) ; carte **« Composition glucidique »** (barre 3 segments bas/modéré/haut + %, affichée dès ≥1 entrée) ; alertes A/B en pills. **`effectiveConsumed` (D20) non touché.**
+- Décision actée : **D21** (analyse dérivée du journal + séance explicite `trainingDays` + 2 règles + réconciliation `trainingDays` vs `workouts` **DÉFÉRÉE** à l'import Strong). Voir DECISIONS.md.
+
+**Vérifs** : `tests/glycemic.test.mjs` ✅ (bucketing ; parts somment à 100 ; **règle unknown dénominateur≠numérateur** ; A borne stricte 20/21 ; B bornes share 49/50 % + plancher 49/50 g + garde `trained` coupe B + unknown dilue → pas de B ; A+B cumulables) · `tests/training.test.mjs` ✅ (présence/absence, upsert idempotent 1 ligne, untoggle delete, clear no-op, autre date, double-write concurrent → 1 ligne) · `migration.test.mjs` **S9** ✅ (base v5 réelle → bump v6 → **données préservées**, `trainingDays` vide, 0 backup wipe) · 8 suites antérieures vertes (10 suites node) · smoke Playwright **13/13** ✅ — **intelligence glucidique** (journal IG mixte → compo 80 % haut-IG + 2 alertes jour de repos → toggle séance coupe B, A reste → reload persiste la séance, 1 ligne/date → retirer la séance ramène B) ; 12 smokes antérieurs verts · `npm run lint`/`build` ✅. **Commit : _en attente du GO_.**
+
 _MAJ 10/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (098bb88) + Tâche 2 profil/métabolique (de0dc89) + Tâche 3 tickers (6406954) + Tâche 4 bilan énergétique (8739e19 + harden ae947ae) + Tâche 4.5 consommé rapide (D17, 59eef78) + Tâche 5 Nutrition (D18, **a587528**) faits, validés. **PHASE 1 BOUCLÉE.** + **Fix socle PWA auto-update (a13fe83, poussé)** pour que la PWA iOS prenne enfin les déploiements. + **Recettes récurrentes (D19, 8c45ae6, poussé)** — store `recipes` additif v5, formule vivante, rappel 1 tap. Prochain = Phase 2 (intelligence glucidique)._
 
 ## En cours
-- (rien) — **Phase 1 close**. Filtre-recherche Composer (`9f14939`) poussé. **Chantier D20** (réconciliation consommé → journal prioritaire) codé + vérifié, **commit en attente du GO**.
+- (rien) — **Phase 2 lot 1 (intelligence glucidique, D21)** codé + vérifié (lint/build/10 suites node/13 smoke verts), **commit en attente du GO**.
 
 ## PROCHAINE ACTION CONCRÈTE
-> **Phase 2 — Intelligence glucidique** (barres de composition IG bas/haut, alertes selon timing/activité, sucres < 20 g/j déjà capté) — voir ROADMAP. Données déjà en base (`gi`, `sugarsSimple` figés sur chaque entrée). **À part : boissons déférées** (~38 alcoolisées à recréer — sous-tâche dédiée, table `drinks` prête, `sourceType:'drink'`).
+> **Phase 2 — Import CSV Strong** (point 6 ROADMAP) : détection auto des colonnes (date, exercice, set, reps, poids) → `workouts`/`sets`. **Déclenche la réconciliation `trainingDays` vs `workouts` DÉFÉRÉE par D21** (probablement `trained = manuel OU importé`). Puis analyse de perf (point 7). **À part : boissons déférées** (~38 alcoolisées, table `drinks` prête, `sourceType:'drink'`).
 
 ## À faire — séquence (validation entre chaque)
 1. ~~**1.0 Migration v2**~~ ✅ commitée (befd12a).
