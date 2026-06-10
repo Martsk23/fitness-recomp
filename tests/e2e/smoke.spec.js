@@ -666,8 +666,9 @@ test('import Strong : CSV réel → rapport (28 séances / 504 sets / 504 Minute
   await page.goto('/')
   await completeOnboarding(page)
 
-  // Onglet Perf → import du CSV Strong RÉEL (la fixture committée).
+  // Onglet Perf → vue Import → import du CSV Strong RÉEL (la fixture committée).
   await page.getByRole('button', { name: 'Perf' }).click()
+  await page.getByRole('button', { name: 'Import' }).click()
   await page.getByText('Import Strong').waitFor()
   await page.setInputFiles('input[aria-label="Importer un fichier CSV Strong"]', 'tests/fixtures/strong-export-reel.csv')
 
@@ -712,9 +713,55 @@ test('import Strong : CSV réel → rapport (28 séances / 504 sets / 504 Minute
   // Persistance réelle : reload (IndexedDB) → les 28 séances survivent + détail consultable.
   await page.reload()
   await page.getByRole('button', { name: 'Perf' }).click()
+  await page.getByRole('button', { name: 'Import' }).click()
   await expect(page.getByText('Séances (28)')).toBeVisible()
   // Ouvre une séance → détail (exos/séries) rendu.
   await page.getByRole('button', { name: /Détail séance/ }).first().click()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
+test('analyse de perf (D23) : import → Synthèse → verdict exo réel + section insuffisante + log import accessible', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Onglet Perf → vue Import → importer le CSV Strong réel (alimente l'analyse).
+  await page.getByRole('button', { name: 'Perf' }).click()
+  await page.getByRole('button', { name: 'Import' }).click()
+  await page.setInputFiles('input[aria-label="Importer un fichier CSV Strong"]', 'tests/fixtures/strong-export-reel.csv')
+  await expect(page.getByTestId('import-report')).toContainText('28')
+
+  // Bascule sur Synthèse : 16 exos suivis (réalité fixture), Chest Dip en tête.
+  await page.getByRole('button', { name: 'Synthèse' }).click()
+  await expect(page.getByText('Suivis (16)')).toBeVisible()
+  // Chest Dip (Assisted) = exo ASSISTÉ : l'assistance BAISSE dans le temps → la
+  // lecture est INVERSÉE → « Progresse » (et NON « Régresse », contresens corrigé).
+  const chestDip = page.getByRole('button', { name: /Détail analyse Chest Dip/ })
+  await expect(chestDip).toBeVisible()
+  await expect(chestDip).toContainText('Progresse')
+  await expect(chestDip).toContainText('assisté — charge = assistance')
+
+  // Détail : explication assisté + échauffement N/A + variantes anti-plateau.
+  await chestDip.click()
+  await expect(page.getByText(/la lecture du verdict est inversée/i)).toBeVisible()
+  await expect(page.getByText('Sans objet pour un exercice assisté.')).toBeVisible()
+  await expect(page.getByText('Variantes anti-plateau')).toBeVisible()
+  // Variante propre à Chest Dip, absente des cartes suivies ET de la fixture → non ambiguë.
+  await expect(page.getByText('Chest Press (Machine)')).toBeVisible()
+
+  // Gate d'honnêteté : section « Données insuffisantes » présente (jamais masquée).
+  const insuffToggle = page.getByRole('button', { name: /Données insuffisantes \(32\)/ })
+  await expect(insuffToggle).toBeVisible()
+  await insuffToggle.click()
+  await expect(page.getByText(/jamais extrapolé sur 2 points/)).toBeVisible()
+
+  // Le log d'import reste accessible (vue Import intacte) : 28 séances.
+  await page.getByRole('button', { name: 'Import' }).click()
+  await expect(page.getByText('Séances (28)')).toBeVisible()
 
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })

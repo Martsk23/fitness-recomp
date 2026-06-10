@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Dumbbell, Upload, AlertTriangle, ChevronDown, ChevronRight, Activity } from 'lucide-react'
+import {
+  Dumbbell, Upload, AlertTriangle, ChevronDown, ChevronRight, Activity,
+  TrendingUp, TrendingDown, Minus, Trophy, Flame, Shuffle,
+} from 'lucide-react'
 import { C, num } from '../ui.js'
+import { db } from '../db.js'
 import {
   importStrongText,
   loadWorkouts,
@@ -8,12 +12,295 @@ import {
   StrongImportError,
   classifyModality,
 } from '../lib/strongImport.js'
+import { analyzeAll, EPLEY_REP_CAP, MIN_SESSIONS } from '../lib/perf.js'
+import { variantsFor } from '../data/exerciseVariants.js'
 
-// ── Écran Perf (Phase 2, D22) ──────────────────────────────────────
-// Import CSV Strong (PapaParse) + log consultable des séances. PÉRIMÈTRE v1 :
-// import idempotent + lecture. AUCUNE analyse de perf (point 7) ni estimation
-// calorique. Le parsing/dédup vit dans src/lib/strongImport.js (pur + testé).
+// ── Écran Perf (Phase 2 : D22 import + D23 analyse) ────────────────
+// Deux vues via segmented control : « Synthèse » (analyse de perf dérivée des
+// sets, D23) et « Import » (CSV Strong + log consultable, D22 — INTACT).
+// Toute la logique d'analyse vit dans src/lib/perf.js (pur + testé sur fixture).
 export default function Perf() {
+  const [view, setView] = useState('synthese')
+
+  return (
+    <div className="px-5 pb-4">
+      <div className="flex items-center gap-2 mt-2 mb-3" style={{ color: C.text }}>
+        <Dumbbell size={18} style={{ color: C.energy }} />
+        <span className="text-[15px] font-semibold">Performances</span>
+      </div>
+
+      {/* Segmented control Synthèse | Import */}
+      <div className="flex p-0.5 rounded-xl mb-4" style={{ background: C.surface, border: `1px solid ${C.line}` }}>
+        {[['synthese', 'Synthèse'], ['import', 'Import']].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setView(id)}
+            className="flex-1 text-[13px] font-semibold py-1.5 rounded-[10px] transition"
+            style={view === id ? { background: C.energy, color: C.bg } : { color: C.muted }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'synthese' ? <SyntheseView /> : <ImportView />}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VUE SYNTHÈSE — analyse de perf (D23)
+// ════════════════════════════════════════════════════════════════════
+function SyntheseView() {
+  const [analysis, setAnalysis] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const sets = await db.sets.toArray()
+      if (alive) setAnalysis(analyzeAll(sets))
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (analysis == null) return null
+  const { tracked, insufficient, cardio } = analysis
+
+  if (!tracked.length && !insufficient.length) {
+    return (
+      <div className="rounded-2xl p-3.5 border text-[12.5px]" style={{ background: C.surface, borderColor: C.line, color: C.muted }}>
+        Aucune séance à analyser. Importe ton export Strong dans l'onglet « Import ».
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="text-[11px] uppercase tracking-[0.14em] mb-2 px-0.5" style={{ color: C.faint }}>
+        Suivis ({tracked.length})
+      </div>
+      {tracked.length === 0 ? (
+        <div className="rounded-2xl p-3.5 border text-[12.5px]" style={{ background: C.surface, borderColor: C.line, color: C.muted }}>
+          Aucun exercice avec assez de séances ({MIN_SESSIONS}+) pour un verdict fiable.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {tracked.map((ex) => (
+            <ExerciseCard key={ex.exercise} ex={ex} />
+          ))}
+        </div>
+      )}
+
+      {insufficient.length > 0 && <InsufficientSection items={insufficient} />}
+      {cardio.length > 0 && (
+        <p className="mt-3 px-0.5 text-[11.5px] leading-relaxed" style={{ color: C.faint }}>
+          <Activity size={11} className="inline -mt-0.5 mr-1" style={{ color: C.carb }} />
+          {cardio.length} exercice{cardio.length > 1 ? 's' : ''} cardio exclu{cardio.length > 1 ? 's' : ''} de l'analyse de force (suivi cardio hors v1).
+        </p>
+      )}
+    </>
+  )
+}
+
+// Mapping verdict → présentation (icône / couleur / libellé).
+const VERDICTS = {
+  up: { Icon: TrendingUp, color: C.energy, label: 'Progresse' },
+  flat: { Icon: Minus, color: C.carb, label: 'Stagne' },
+  down: { Icon: TrendingDown, color: C.warn, label: 'Régresse' },
+}
+
+function formatValue(metric, value) {
+  if (metric === 'e1rm') return `${Math.round(value)} kg`
+  return `${Math.round(value).toLocaleString('fr-FR')}` // volume
+}
+const metricLabel = (m) => (m === 'e1rm' ? 'e1RM' : 'volume')
+
+// ── Carte exercice (verdict + valeur + PR + détail repliable) ──────
+function ExerciseCard({ ex }) {
+  const [open, setOpen] = useState(false)
+  const v = ex.verdict ? VERDICTS[ex.verdict] : null
+  const variants = variantsFor(ex.exercise)
+
+  return (
+    <div className="rounded-2xl border overflow-hidden" style={{ background: C.surface, borderColor: C.line }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={`Détail analyse ${ex.exercise}`}
+        className="w-full flex items-center justify-between px-3.5 py-3 active:opacity-80 transition"
+      >
+        <span className="flex items-center gap-2 text-left min-w-0">
+          {open ? <ChevronDown size={15} style={{ color: C.faint }} className="shrink-0" /> : <ChevronRight size={15} style={{ color: C.faint }} className="shrink-0" />}
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold truncate" style={{ color: C.text }}>
+              {ex.exercise}
+            </span>
+            <span className="block text-[11px] mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: C.faint }}>
+              <span style={num}>{formatValue(ex.metric, ex.current)}</span>
+              <span className="px-1.5 py-px rounded" style={{ background: C.surfaceHi }}>
+                {ex.assisted ? 'e1RM assist.' : metricLabel(ex.metric)}
+              </span>
+              {ex.assisted && (
+                <span className="px-1.5 py-px rounded" style={{ background: C.surfaceHi, color: C.carb }}>
+                  assisté — charge = assistance
+                </span>
+              )}
+              {ex.pr?.isRecentPR && (
+                <span className="flex items-center gap-0.5" style={{ color: C.energy }}>
+                  <Trophy size={10} /> PR
+                </span>
+              )}
+            </span>
+          </span>
+        </span>
+        {v && (
+          <span className="flex items-center gap-1 text-[11.5px] font-semibold shrink-0 ml-2" style={{ color: v.color }}>
+            <v.Icon size={14} /> {v.label}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="px-3.5 pb-3.5 pt-0.5 border-t space-y-3" style={{ borderColor: C.line }}>
+          {ex.assisted && (
+            <p className="mt-2.5 text-[11.5px] leading-relaxed" style={{ color: C.carb }}>
+              Exercice assisté : la valeur est la charge d'<b>assistance</b> — moins = plus fort. La lecture du verdict est inversée.
+            </p>
+          )}
+          {/* Sparkline par séance */}
+          <div className={ex.assisted ? '' : 'mt-2.5'}>
+            <div className="text-[11px] mb-1.5" style={{ color: C.faint }}>
+              {metricLabel(ex.metric)} par séance ({ex.series.length}){ex.assisted ? ' · assistance (↓ = mieux)' : ''}
+            </div>
+            <Sparkline series={ex.series} color={v?.color || C.muted} />
+          </div>
+
+          {/* Historique compact */}
+          <div className="flex flex-wrap gap-1.5">
+            {ex.series.map((p) => (
+              <span key={p.date} className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: C.surfaceHi, color: C.faint, ...num }}>
+                {p.date.slice(5)} · {formatValue(ex.metric, p.value)}
+              </span>
+            ))}
+          </div>
+
+          {/* Records */}
+          {ex.pr && (
+            <div className="text-[11.5px] flex items-center gap-1.5 flex-wrap" style={{ color: C.muted }}>
+              <Trophy size={12} style={{ color: C.energy }} />
+              {ex.assisted ? 'Assistance min : ' : 'Record : '}
+              <span style={num}>{formatValue(ex.metric, ex.pr.best)}</span>
+              {ex.pr.loadExtreme > 0 && (
+                <span style={{ color: C.faint }}>
+                  {' · '}{ex.assisted ? 'assistance min' : 'charge max'} <span style={num}>{ex.pr.loadExtreme} kg</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Échauffement calculé */}
+          <div>
+            <div className="text-[11px] mb-1 flex items-center gap-1" style={{ color: C.faint }}>
+              <Flame size={11} style={{ color: C.carb }} /> Échauffement{ex.assisted ? '' : ` (sur ${ex.topWeight} kg)`}
+            </div>
+            {ex.assisted ? (
+              <span className="text-[11.5px]" style={{ color: C.faint }}>Sans objet pour un exercice assisté.</span>
+            ) : ex.warmup.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {ex.warmup.map((s, i) => (
+                  <span key={i} className="text-[11.5px] px-2 py-0.5 rounded-md" style={{ background: C.surfaceHi, color: C.text, ...num }}>
+                    {s.weight} kg × {s.reps}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-[11.5px]" style={{ color: C.faint }}>Charge trop légère pour un échauffement calculé.</span>
+            )}
+          </div>
+
+          {/* Variantes anti-plateau */}
+          {variants.length > 0 && (
+            <div>
+              <div className="text-[11px] mb-1 flex items-center gap-1" style={{ color: C.faint }}>
+                <Shuffle size={11} style={{ color: C.protein }} /> Variantes anti-plateau
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {variants.map((name) => (
+                  <span key={name} className="text-[11.5px] px-2 py-0.5 rounded-md" style={{ background: C.surfaceHi, color: C.muted }}>
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Sparkline SVG inline (zéro dépendance, ne grossit pas le bundle) ─
+function Sparkline({ series, color }) {
+  const W = 240
+  const H = 44
+  const pad = 4
+  const vals = series.map((p) => p.value)
+  const lo = Math.min(...vals)
+  const hi = Math.max(...vals)
+  const span = hi - lo || 1
+  const n = vals.length
+  const x = (i) => (n === 1 ? W / 2 : pad + (i * (W - 2 * pad)) / (n - 1))
+  const y = (v) => H - pad - ((v - lo) / span) * (H - 2 * pad)
+  const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }} preserveAspectRatio="none" aria-hidden="true">
+      {n > 1 && <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />}
+      {vals.map((v, i) => (
+        <circle key={i} cx={x(i)} cy={y(v)} r={i === n - 1 ? 2.6 : 1.6} fill={color} />
+      ))}
+    </svg>
+  )
+}
+
+// ── Section « Données insuffisantes » (repliée, jamais masquée) ─────
+function InsufficientSection({ items }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] px-0.5 py-1"
+        style={{ color: C.faint }}
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        Données insuffisantes ({items.length})
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-2xl border p-3 text-[12px] leading-relaxed" style={{ background: C.surface, borderColor: C.line, color: C.muted }}>
+          <p className="mb-2 text-[11.5px]" style={{ color: C.faint }}>
+            Moins de {MIN_SESSIONS} séances exploitables (séries ≤ {EPLEY_REP_CAP} reps) — aucun verdict, jamais extrapolé sur 2 points.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {items.map((ex) => (
+              <span key={ex.exercise} className="px-2 py-0.5 rounded-md text-[11.5px]" style={{ background: C.surfaceHi, color: C.faint }}>
+                {ex.exercise} <span style={num}>({ex.sessionCount})</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VUE IMPORT — CSV Strong + log consultable (D22, INTACT)
+// ════════════════════════════════════════════════════════════════════
+function ImportView() {
   const fileRef = useRef(null)
   const [workouts, setWorkouts] = useState(null)
   const [report, setReport] = useState(null)
@@ -46,7 +333,6 @@ export default function Perf() {
       setReport(res)
       await refresh()
     } catch (err) {
-      // Erreur typée (format/vide) → message clair ; sinon message générique.
       setError(err instanceof StrongImportError ? err.message : `Import impossible : ${err.message}`)
     } finally {
       setBusy(false)
@@ -55,12 +341,7 @@ export default function Perf() {
   }
 
   return (
-    <div className="px-5 pb-4">
-      <div className="flex items-center gap-2 mt-2 mb-4" style={{ color: C.text }}>
-        <Dumbbell size={18} style={{ color: C.energy }} />
-        <span className="text-[15px] font-semibold">Performances</span>
-      </div>
-
+    <>
       {/* Import CSV Strong */}
       <div className="rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
         <div className="text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: C.faint }}>
@@ -118,7 +399,7 @@ export default function Perf() {
           </div>
         )}
       </div>
-    </div>
+    </>
   )
 }
 
