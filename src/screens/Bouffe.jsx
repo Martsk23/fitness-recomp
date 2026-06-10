@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Trash2, Check, X, Pencil, UtensilsCrossed, RotateCcw, AlertTriangle, BookMarked } from 'lucide-react'
+import { Plus, Minus, Search, Trash2, Check, X, Pencil, UtensilsCrossed, RotateCcw, AlertTriangle, BookMarked, Wine } from 'lucide-react'
 import { C, num } from '../ui.js'
 import {
   loadIngredients,
@@ -20,15 +20,17 @@ import {
   deleteRecipe,
   applyRecipe,
 } from '../lib/nutrition.js'
+import { loadDrinks, logDrink, addDrink, updateDrink, deleteDrink } from '../lib/drinks.js'
 
 const parseNum = (s) => Number(String(s).replace(',', '.').trim())
 const GI_LABEL = { low: 'IG bas', mid: 'IG modéré', high: 'IG haut' }
 
 export default function Bouffe() {
-  const [view, setView] = useState('composer') // composer | journal | biblio | recettes
+  const [view, setView] = useState('composer') // composer | journal | biblio | recettes | boissons
   const [ingredients, setIngredients] = useState(null)
   const [entries, setEntries] = useState([])
   const [recipes, setRecipes] = useState([])
+  const [drinks, setDrinks] = useState([])
 
   async function reloadIngredients() {
     setIngredients(await loadIngredients())
@@ -39,14 +41,18 @@ export default function Bouffe() {
   async function reloadRecipes() {
     setRecipes(await loadRecipes())
   }
+  async function reloadDrinks() {
+    setDrinks(await loadDrinks())
+  }
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const [ings, ents, recs] = await Promise.all([loadIngredients(), loadDayEntries(), loadRecipes()])
+      const [ings, ents, recs, drks] = await Promise.all([loadIngredients(), loadDayEntries(), loadRecipes(), loadDrinks()])
       if (!alive) return
       setIngredients(ings)
       setEntries(ents)
       setRecipes(recs)
+      setDrinks(drks)
     })()
     return () => {
       alive = false
@@ -57,12 +63,13 @@ export default function Bouffe() {
 
   return (
     <div className="px-5 pb-4">
-      {/* Sélecteur de sous-vue */}
-      <div className="flex gap-1.5 mt-2 mb-4 p-1 rounded-xl" style={{ background: C.surface }}>
+      {/* Sélecteur de sous-vue (5 onglets : texte verbatim → smokes intacts) */}
+      <div className="flex gap-1 mt-2 mb-4 p-1 rounded-xl" style={{ background: C.surface }}>
         <SubTab id="composer" label="Composer" view={view} set={setView} />
         <SubTab id="journal" label="Journal" view={view} set={setView} />
         <SubTab id="biblio" label="Bibliothèque" view={view} set={setView} />
         <SubTab id="recettes" label="Recettes" view={view} set={setView} />
+        <SubTab id="boissons" label="Boissons" view={view} set={setView} />
       </div>
 
       {view === 'composer' && (
@@ -83,6 +90,7 @@ export default function Bouffe() {
         // Le journal est rafraîchi en fond (l'onglet Journal le montrera à jour).
         <Recipes recipes={recipes} onChange={reloadRecipes} onApplied={reloadEntries} />
       )}
+      {view === 'boissons' && <Drinks drinks={drinks} onChange={reloadDrinks} onLogged={reloadEntries} />}
     </div>
   )
 }
@@ -93,7 +101,7 @@ function SubTab({ id, label, view, set }) {
     <button
       type="button"
       onClick={() => set(id)}
-      className="flex-1 py-1.5 rounded-lg text-[12.5px] font-semibold active:scale-95 transition"
+      className="flex-1 px-0.5 py-1.5 rounded-lg text-[11px] font-semibold active:scale-95 transition whitespace-nowrap"
       style={{ background: active ? C.surfaceHi : 'transparent', color: active ? C.text : C.faint }}
     >
       {label}
@@ -856,6 +864,304 @@ function RecipeRow({ recipe, onChange, onApplied, setFeedback }) {
             </>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── (e) Boissons : base + saisie au journal (1 tap × multiplicateur, D25) ──
+// Une boisson = portion standard. « Boire » loggue 1 journalEntry sourceType:'drink'
+// (macros + kcal figés D1, kcal PORTÉ). Édition/suppression = onglet Journal (regram
+// sur grams=portionMl). CRUD custom calque la Bibliothèque ingrédients.
+function Drinks({ drinks, onChange, onLogged }) {
+  const [q, setQ] = useState('')
+  const [cat, setCat] = useState('all')
+  const [adding, setAdding] = useState(false)
+  const [editId, setEditId] = useState(null)
+  const [note, setNote] = useState('')
+
+  const cats = useMemo(() => distinctCategories(drinks), [drinks])
+  const filtered = useMemo(() => {
+    const byCat = cat === 'all' ? drinks : drinks.filter((d) => d.category === cat)
+    return filterIngredients(byCat, { q }) // même prédicat de nom (sous-chaîne)
+  }, [drinks, q, cat])
+
+  async function logOne(drink, count) {
+    await logDrink(drink, count)
+    setNote(`${drink.name} ×${count} ajouté au journal.`)
+    await onLogged()
+  }
+
+  return (
+    <div>
+      {note && (
+        <div className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border mb-3" style={{ background: 'rgba(190,242,100,0.08)', borderColor: 'rgba(190,242,100,0.3)', color: C.energy }}>
+          <Check size={15} className="shrink-0" />
+          <span className="text-[12.5px]">{note}</span>
+        </div>
+      )}
+
+      {/* Recherche */}
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2 border mb-2.5" style={{ background: C.surface, borderColor: C.line }}>
+        <Search size={15} style={{ color: C.faint }} />
+        <input
+          type="text"
+          aria-label="Rechercher une boisson"
+          placeholder="Rechercher…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="flex-1 bg-transparent outline-none text-[14px]"
+          style={{ color: C.text }}
+        />
+      </div>
+
+      {/* Filtres catégorie (dynamiques) */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1 mb-3">
+        <CatChip id="all" label="Toutes" cat={cat} set={setCat} />
+        {cats.map((c) => (
+          <CatChip key={c} id={c} label={c} cat={cat} set={setCat} />
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          setAdding((v) => !v)
+          setEditId(null)
+        }}
+        className="w-full mb-3 rounded-xl py-2 text-[13px] font-semibold active:scale-95 transition flex items-center justify-center gap-1.5"
+        style={{ background: adding ? C.surfaceHi : C.surface, color: adding ? C.text : C.energy, border: `1px solid ${C.line}` }}
+      >
+        <Plus size={15} /> {adding ? 'Fermer' : 'Ajouter une boisson'}
+      </button>
+
+      {adding && (
+        <DrinkForm
+          cats={cats}
+          onCancel={() => setAdding(false)}
+          onSubmit={async (data) => {
+            await addDrink(data)
+            setAdding(false)
+            await onChange()
+          }}
+        />
+      )}
+
+      <div className="space-y-2">
+        {filtered.map((d) =>
+          editId === d.id ? (
+            <DrinkForm
+              key={d.id}
+              cats={cats}
+              initial={d}
+              onCancel={() => setEditId(null)}
+              onSubmit={async (data) => {
+                await updateDrink(d.id, data)
+                setEditId(null)
+                await onChange()
+              }}
+            />
+          ) : (
+            <DrinkRow
+              key={d.id}
+              drink={d}
+              onLog={logOne}
+              onEdit={() => {
+                setEditId(d.id)
+                setAdding(false)
+              }}
+              onDelete={async () => {
+                await deleteDrink(d.id)
+                await onChange()
+              }}
+            />
+          ),
+        )}
+        {filtered.length === 0 && <EmptyHint icon={Search} text="Aucune boisson ne correspond." />}
+      </div>
+    </div>
+  )
+}
+
+function DrinkRow({ drink, onLog, onEdit, onDelete }) {
+  const [count, setCount] = useState(1)
+  return (
+    <div className="rounded-xl px-3.5 py-2.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[13.5px] font-medium truncate" style={{ color: C.text }}>
+            {drink.name} <span style={{ color: C.faint }}>· {drink.portionLabel}</span>
+          </div>
+          <div className="text-[11.5px]" style={{ color: C.faint, ...num }}>
+            {drink.kcal} kcal · G {drink.carb} · sucres {drink.sugarsSimple} · {GI_LABEL[drink.gi]}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" onClick={onEdit} aria-label={`Modifier ${drink.name}`} className="p-1.5 active:scale-90" style={{ color: C.faint }}>
+            <Pencil size={15} />
+          </button>
+          <button type="button" onClick={onDelete} aria-label={`Supprimer ${drink.name}`} className="p-1.5 active:scale-90" style={{ color: C.faint }}>
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 mt-2.5">
+        <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: C.line, background: C.bg }}>
+          <button
+            type="button"
+            onClick={() => setCount((c) => Math.max(1, c - 1))}
+            disabled={count <= 1}
+            aria-label={`Moins ${drink.name}`}
+            className="px-2 py-1.5 active:scale-90 disabled:opacity-30"
+            style={{ color: C.text }}
+          >
+            <Minus size={14} />
+          </button>
+          <span className="w-6 text-center text-[13.5px] font-semibold tabular-nums" style={{ color: C.text }} data-testid={`drink-count-${drink.id}`}>
+            {count}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCount((c) => c + 1)}
+            aria-label={`Plus ${drink.name}`}
+            className="px-2 py-1.5 active:scale-90"
+            style={{ color: C.text }}
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => onLog(drink, count)}
+          aria-label={`Boire ${drink.name}`}
+          className="flex-1 rounded-lg py-1.5 text-[13px] font-semibold active:scale-95 transition flex items-center justify-center gap-1.5"
+          style={{ background: C.energy, color: C.bg }}
+        >
+          <Wine size={15} /> Boire
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const EMPTY_DRINK = { name: '', category: '', portionLabel: '', portionMl: '', kcal: '', protein: '', carb: '', sugarsSimple: '', fat: '', alcoholG: '', gi: 'low' }
+
+function DrinkForm({ cats, initial, onSubmit, onCancel }) {
+  const [f, setF] = useState(() =>
+    initial
+      ? {
+          name: initial.name,
+          category: initial.category,
+          portionLabel: initial.portionLabel,
+          portionMl: String(initial.portionMl),
+          kcal: String(initial.kcal),
+          protein: String(initial.protein),
+          carb: String(initial.carb),
+          sugarsSimple: String(initial.sugarsSimple),
+          fat: String(initial.fat),
+          alcoholG: String(initial.alcoholG),
+          gi: initial.gi,
+        }
+      : EMPTY_DRINK,
+  )
+  const [error, setError] = useState('')
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }))
+  const catOptions = useMemo(() => {
+    const known = ['bières', 'vins', 'apéritifs', 'spiritueux', 'liqueurs', 'cocktails']
+    return [...new Set([...known, ...cats])]
+  }, [cats])
+
+  async function submit() {
+    setError('')
+    try {
+      await onSubmit({
+        ...f,
+        portionMl: parseNum(f.portionMl),
+        kcal: parseNum(f.kcal),
+        protein: parseNum(f.protein),
+        carb: parseNum(f.carb),
+        sugarsSimple: parseNum(f.sugarsSimple),
+        fat: parseNum(f.fat),
+        alcoholG: parseNum(f.alcoholG),
+      })
+    } catch (err) {
+      setError(err.message || 'Saisie invalide.')
+    }
+  }
+
+  return (
+    <div className="rounded-2xl p-3.5 border mb-3" style={{ background: C.surfaceHi, borderColor: C.line }}>
+      <div className="flex gap-2 mb-2">
+        <input
+          type="text"
+          aria-label="Nom de la boisson"
+          placeholder="Nom"
+          value={f.name}
+          onChange={set('name')}
+          className="flex-1 rounded-xl px-3 py-2 text-[14px] outline-none border"
+          style={{ background: C.bg, borderColor: C.line, color: C.text }}
+        />
+        <input
+          type="text"
+          aria-label="Portion"
+          placeholder="33 cl"
+          value={f.portionLabel}
+          onChange={set('portionLabel')}
+          className="w-24 rounded-xl px-3 py-2 text-[14px] outline-none border"
+          style={{ background: C.bg, borderColor: C.line, color: C.text }}
+        />
+      </div>
+      <div className="flex gap-2 mb-2">
+        <select
+          aria-label="Catégorie de boisson"
+          value={f.category}
+          onChange={set('category')}
+          className="flex-1 rounded-xl px-3 py-2 text-[13px] outline-none border"
+          style={{ background: C.bg, borderColor: C.line, color: f.category ? C.text : C.faint }}
+        >
+          <option value="">Catégorie…</option>
+          {catOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Index glycémique de la boisson"
+          value={f.gi}
+          onChange={set('gi')}
+          className="rounded-xl px-3 py-2 text-[13px] outline-none border"
+          style={{ background: C.bg, borderColor: C.line, color: C.text }}
+        >
+          <option value="low">IG bas</option>
+          <option value="mid">IG modéré</option>
+          <option value="high">IG haut</option>
+        </select>
+      </div>
+      <div className="grid grid-cols-4 gap-1.5 mb-2">
+        <NumField label="ml" v={f.portionMl} on={set('portionMl')} />
+        <NumField label="kcal" v={f.kcal} on={set('kcal')} />
+        <NumField label="alcool g" v={f.alcoholG} on={set('alcoholG')} />
+        <NumField label="P" v={f.protein} on={set('protein')} />
+        <NumField label="G" v={f.carb} on={set('carb')} />
+        <NumField label="sucr." v={f.sugarsSimple} on={set('sugarsSimple')} />
+        <NumField label="L" v={f.fat} on={set('fat')} />
+      </div>
+      <div className="text-[10.5px] mb-2" style={{ color: C.faint }}>
+        Valeurs PAR portion · sucres simples ⊂ glucides · kcal porté (alcool 7 kcal/g)
+      </div>
+      {error && (
+        <div className="text-[12px] mb-2" style={{ color: C.warn }}>
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button type="button" onClick={submit} className="flex-1 rounded-xl py-2 text-[13px] font-semibold active:scale-95 transition" style={{ background: C.energy, color: C.bg }}>
+          {initial ? 'Enregistrer' : 'Ajouter'}
+        </button>
+        <button type="button" onClick={onCancel} className="rounded-xl px-4 py-2 text-[13px] font-semibold active:scale-95 transition" style={{ background: C.surface, color: C.muted, border: `1px solid ${C.line}` }}>
+          Annuler
+        </button>
       </div>
     </div>
   )

@@ -266,8 +266,28 @@ function n_yesterdayKey() {
   ok(todayKey(d) !== todayKey(new Date()), 'clé veille ≠ clé du jour → le paramètre date EST pris en compte (pas ignoré)')
 }
 
+// ── O — EXCLUSION boissons (D25) : jamais suggérée comme repas ──────
+// Preuve STRUCTURELLE : la source D24 = recipes résolues contre la biblio
+// INGRÉDIENTS. Une boisson vit dans le store `drinks` (jamais passé à suggestMeals)
+// et ne peut entrer dans une recette (D19 ingrédients-only). Si on FORCE une recette
+// à référencer un id de boisson, sa résolution échoue → recette EXCLUE (comme une
+// ligne morte). Aucune boisson ne peut donc remonter en suggestion.
+function o_drinkExcluded() {
+  console.log('\n— O : boisson jamais suggérée comme repas (D25) —')
+  // Recette « piégée » pointant un id de boisson (absent de la biblio ingrédients).
+  const trap = { id: 'r-drink', name: 'Bière piège', lines: [{ sourceId: 'biere-blonde', nameSnapshot: 'Bière blonde', grams: 330 }] }
+  const m = recipeMacros(trap, byId)
+  ok(!m.resolvable && m.totals === null, 'recette référençant une boisson → non résolvable (exclue du scoring)')
+  // Avec UNIQUEMENT la recette piégée + une vraie recette : seule la vraie remonte.
+  const view = suggestMeals({ recipes: [trap, R.salade], ingredientsById: byId, ingredients, remaining: wide, hour: 12 })
+  ok(view.mode === 'suggestions', 'mode suggestions (la vraie recette tient)')
+  ok(view.suggestions.every((s) => s.recipe.id !== 'r-drink'), 'la recette-boisson n’apparaît JAMAIS dans les suggestions')
+  ok(view.suggestions.some((s) => s.recipe.id === 'r-sal'), 'seule la recette d’ingrédients est suggérée')
+}
+
 a_slots()
 n_yesterdayKey()
+o_drinkExcluded()
 b_macros()
 c_feasible()
 d_score()

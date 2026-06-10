@@ -4,7 +4,7 @@ import { registerSW } from 'virtual:pwa-register'
 import './index.css'
 import App from './App.jsx'
 import { db } from './db.js'
-import { seedIfEmpty, seedLibraryIfNeeded } from './seed.js'
+import { seedIfEmpty, seedLibraryIfNeeded, seedDrinksIfNeeded } from './seed.js'
 import { migrateLegacyIfNeeded } from './lib/migrate.js'
 import { requestPersistentStorage } from './lib/storage.js'
 
@@ -18,6 +18,9 @@ async function boot() {
   // Bibliothèque d'ingrédients : gardée par le flag librarySeededV1 (part même
   // sur un device déjà initialisé, ne se rebat pas avec l'import). Voir seed.js.
   await seedLibraryIfNeeded()
+  // Base boissons : même mécanique de flag (drinksSeededV1), part sur device déjà
+  // initialisé, ne se rebat pas avec l'import. Voir seed.js (D25).
+  await seedDrinksIfNeeded()
   // Best-effort, non bloquant : on n'attend pas l'octroi iOS pour démarrer.
   requestPersistentStorage().catch(() => {})
 

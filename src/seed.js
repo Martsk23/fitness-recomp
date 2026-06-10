@@ -1,6 +1,7 @@
 import { db, nowMs, newRow, touch, SETTINGS_KEY } from './db.js'
 import { SUGARS_SIMPLE_MAX } from './lib/metabolic.js'
 import { INGREDIENTS_SEED } from './data/ingredientsSeed.js'
+import { DRINKS_SEED } from './data/drinksSeed.js'
 
 // Tickers par défaut : eau (compteur de verres) + compléments (cases).
 // Non-perso → OK de les seeder pour tout le monde.
@@ -65,5 +66,25 @@ export async function seedLibraryIfNeeded() {
     const missing = INGREDIENTS_SEED.filter((ing) => !existing.has(ing.id))
     if (missing.length) await db.ingredients.bulkAdd(missing.map((ing) => newRow({ ...ing, createdAt: now })))
     await db.settings.put(touch({ ...s, librarySeededV1: true }))
+  })
+}
+
+// Amorce la base boissons (38 boissons alcoolisées, valeurs PAR PORTION).
+// GARDÉ PAR UN FLAG `settings.drinksSeededV1` — calque EXACT de seedLibraryIfNeeded
+// (D18) : part même sur un device déjà initialisé ; le flag vit dans `settings`,
+// donc voyage avec l'export/import (un backup pris après le seed ne re-seede pas).
+// Ceinture + bretelles : on n'insère QUE les ids slug absents (l'id ÉTANT la PK) →
+// un re-run accidentel ne peut ni dupliquer ni throw, et n'écrase jamais une
+// boisson éditée (pas de bulkPut). Idempotent.
+export async function seedDrinksIfNeeded() {
+  const s = await db.settings.get(SETTINGS_KEY)
+  if (!s || s.drinksSeededV1) return
+
+  await db.transaction('rw', db.settings, db.drinks, async () => {
+    const now = nowMs()
+    const existing = new Set(await db.drinks.toCollection().primaryKeys())
+    const missing = DRINKS_SEED.filter((d) => !existing.has(d.id))
+    if (missing.length) await db.drinks.bulkAdd(missing.map((d) => newRow({ ...d, createdAt: now })))
+    await db.settings.put(touch({ ...s, drinksSeededV1: true }))
   })
 }

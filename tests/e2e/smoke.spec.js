@@ -821,3 +821,57 @@ test('une pesée saisie est persistée et relue après reload', async ({ page })
   await page.getByRole('button', { name: 'Jour' }).click()
   await expect(page.getByText('Pesée enregistrée')).toBeVisible()
 })
+
+test('boissons (D25) : seed 38 → Boissons → bière ×2 loguée → 282 mangé + ligne alcool 182 kcal → persiste', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // Base boissons partie au boot via le flag drinksSeededV1 (38 lignes).
+  const drinkCount = await page.evaluate(async () => {
+    const open = indexedDB.open('fitnessRecomp')
+    const idb = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result)
+      open.onerror = () => rej(open.error)
+    })
+    const n = await new Promise((res, rej) => {
+      const req = idb.transaction('drinks', 'readonly').objectStore('drinks').count()
+      req.onsuccess = () => res(req.result)
+      req.onerror = () => rej(req.error)
+    })
+    idb.close()
+    return n
+  })
+  expect(drinkCount).toBe(38)
+
+  // Aucune boisson encore → la ligne alcool est ABSENTE du Jour.
+  await expect(page.getByTestId('alcohol-line')).toHaveCount(0)
+
+  // Bouffe → Boissons → filtrer « blonde » → stepper ×2 → Boire.
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByRole('button', { name: 'Boissons' }).click()
+  await page.getByLabel('Rechercher une boisson').fill('blonde')
+  await page.getByRole('button', { name: 'Plus Bière blonde' }).click()
+  await expect(page.getByTestId('drink-count-biere-blonde')).toHaveText('2')
+  await page.getByRole('button', { name: 'Boire Bière blonde' }).click()
+
+  // Journal du jour : 1 entrée portant la portion + ×2 figé (282 kcal, 660 g).
+  await page.getByRole('button', { name: 'Journal' }).click()
+  await expect(page.getByText('Bière blonde (33 cl)')).toBeVisible()
+  await expect(page.getByText(/660 g · 282 kcal/)).toBeVisible()
+
+  // Jour : consommé allumé (282) + ligne alcool = résidu 282−(4·3+4·22) = 182 kcal.
+  await page.getByRole('button', { name: 'Jour', exact: true }).click()
+  await expect(page.getByText('282 mangé')).toBeVisible()
+  await expect(page.getByTestId('alcohol-line')).toHaveText(/Alcool : 182 kcal/)
+
+  // Persistance réelle : reload → l'entrée boisson survit (consommé + ligne alcool).
+  await page.reload()
+  await expect(page.getByText('282 mangé')).toBeVisible()
+  await expect(page.getByTestId('alcohol-line')).toHaveText(/Alcool : 182 kcal/)
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})

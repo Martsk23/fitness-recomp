@@ -46,6 +46,6 @@ _Parké : **Tickers configurables** (cahier des charges, volontairement différ�
 9. Couche IA Claude **optionnelle**, opt-in, désactivable — interface commune moteur de règles / moteur IA prévue dès la Phase 3 (implémentation différée). _Inclut désormais : mini-chat repas conversationnel + import de recette par texte collé (légende Insta/TikTok) — déférés ici comme cas d'usage IA._
 
 ## À recréer (ancien projet perdu — pas de migration)
-- Base ~38 boissons alcoolisées (kcal + portions standard).
-- Logique d'intelligence glucidique.
-- Bibliothèque d'ingrédients bruts de départ (/100 g), enrichissable.
+- [x] **Base ~38 boissons alcoolisées** ✅ (D25, commit en attente) — `src/data/drinksSeed.js` (38, valeurs PAR PORTION régénérées depuis standards) + `src/lib/drinks.js` (modèle portion, kcal PORTÉ jamais recalculé, `logDrink`→`journalEntry` sourceType:'drink', CRUD custom, `alcoholKcal` ligne « non répartis »). 2 axes séparés (sucres budget / gi compo / alcoholG porteur kcal), champagne brut=sec. Zéro bump (store v2 réutilisé, flag `drinksSeededV1`). 5ᵉ onglet Boissons dans Bouffe. Exclusion suggestions prouvée. `drinks.test.mjs` + `suggest.test.mjs` bloc O + smoke. Voir D25.
+- [x] Logique d'intelligence glucidique ✅ (D21).
+- [x] Bibliothèque d'ingrédients bruts de départ (/100 g), enrichissable ✅ (D18, 58 ingrédients).

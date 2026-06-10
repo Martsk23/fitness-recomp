@@ -9,6 +9,7 @@ import { loadIntake, setIntake, clearIntake, effectiveConsumed } from '../lib/in
 import { loadTraining, setTraining, loadDayWorkouts, effectiveTrained } from '../lib/training.js'
 import { glycemicShares, evaluateGlycemicAlerts } from '../lib/glycemic.js'
 import { loadRecipes, loadIngredients, applyRecipe } from '../lib/nutrition.js'
+import { alcoholKcal } from '../lib/drinks.js'
 import { suggestMeals, proteinDeficitYesterday } from '../lib/suggest.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
@@ -30,6 +31,9 @@ export default function Jour() {
   const [dayWorkouts, setDayWorkouts] = useState([])
   // Composition glucidique du journal du jour (dérivée, jamais stockée).
   const [glyc, setGlyc] = useState(null)
+  // kcal d'alcool « non répartis » du jour (résidu kcal−macros sur entrées drink,
+  // D25). Dérivé, jamais stocké. 0 → ligne masquée (aucune boisson ce jour).
+  const [alcoholK, setAlcoholK] = useState(0)
   // Re-chargement après une action qui modifie le journal (ex. rappel d'une
   // suggestion D24) → tout se recalcule (consommé, macros, restants, carte).
   const [refreshKey, setRefreshKey] = useState(0)
@@ -66,6 +70,7 @@ export default function Jour() {
       setTrained(isTrained)
       setDayWorkouts(workoutsToday)
       setGlyc(glycemicShares(entries))
+      setAlcoholK(alcoholKcal(entries))
     })()
     return () => {
       alive = false
@@ -223,6 +228,16 @@ export default function Jour() {
           Recomp · sucres simples &lt; {settings.targetSugarsSimple} g/jour
         </div>
       </div>
+
+      {/* Alcool : kcal non répartis dans les macros (résidu, D25). Discrète, visible
+          UNIQUEMENT si une boisson a été loguée aujourd'hui (X > 0). Honnête : ces
+          calories comptent dans le restant (consommé), mais ne sont ni P, ni G, ni L. */}
+      {alcoholK > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 text-[11.5px]" style={{ color: C.faint }} data-testid="alcohol-line">
+          <Sparkles size={12} style={{ color: C.fat }} />
+          <span style={num}>Alcool : {alcoholK} kcal (non répartis)</span>
+        </div>
+      )}
 
       {/* Suggestions de repas (D24) : dérivées des recettes (D19) + restants du jour.
           Sous le bloc restant (« voilà ton restant → voilà quoi manger »). 1 tap =

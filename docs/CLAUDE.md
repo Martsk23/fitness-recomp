@@ -35,7 +35,7 @@ Conventions : id auto-incrément (`++id`) ; dates jour en `'YYYY-MM-DD'` (string
 | `sets` | `++id, workoutId, exercise, [exercise+date]` | workoutId, exercise, setIndex, reps, weightKg, date |
 | `tickerConfigs` | `++id, order` | label, type (`counter/checkbox`), target, icon, order, active |
 | `tickerStates` | `++id, [tickerId+date], date` | tickerId, date, value (count ou 0/1) — **absence de ligne = 0 ⇒ reset journalier** |
-| `drinks` | `++id, name, category` | name, category, portionLabel, portionMl, kcal, carb, sugarsSimple, alcoholG, isCustom |
+| `drinks` | `++id, name, category` | name, category, portionLabel, portionMl, **kcal/protein/carb/sugarsSimple/fat (PAR PORTION, kcal PORTÉ jamais recalculé — D25)**, gi (`low/mid/high`), alcoholG (porteur kcal, 7 kcal/g), isCustom, createdAt |
 | `settings` | `++id` | **singleton id=1** : targetKcal/Protein/Carb/Fat/SugarsSimple, preferences, updatedAt |
 
 Décisions de design : voir `DECISIONS.md`.
