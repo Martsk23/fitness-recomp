@@ -180,13 +180,8 @@ _MAJ 10/06/2026 — Phase 0 + 1.0 (befd12a) + fix Jour (8bed676) + 1.1 poids (09
 9. ~~**Phase 2 — intelligence glucidique (D21)**~~ ✅ (8bc8026) puis ~~**import CSV Strong (D22)**~~ ✅ (5ab972b, poussé) puis ~~**analyse de perf (D23)**~~ ✅ (4939878, poussé). **PHASE 2 BOUCLÉE.**
 10. ~~**Phase 3 — suggestions de repas (point 8 REDÉFINI, D24)**~~ ✅ (`feat(suggest)`, poussé) — carte Suggestions sur le Jour, chat abandonné comme surface. Reste : **Phase 3 point 9** (couche IA Claude opt-in + mini-chat + import recette texte collé). _+ boissons déférées (sous-tâche)._
 
-## PROCHAIN GROS CHANTIER = NUTRITION (discu dédiée)
-**Après** les tickers. À attaquer dans une **discussion neuve** :
-- Bibliothèque d'**ingrédients bruts /100 g** (enrichissable).
-- **Composition d'un plat par pesée** → `journalEntries` (macros figées en snapshot, D1).
-- **Migration des ~38 boissons** (kcal + portions standard) — base à recréer (ancien projet perdu).
-
-**Ne rien coder de nutrition ni de profil ici.**
+## PROCHAIN GROS CHANTIER
+> **Nutrition livrée** (bibliothèque /100 g + composition par pesée → `journalEntries`, D18 `a587528` ; recettes récurrentes, D19 `8c45ae6`). Phases 0/1/2 + Phase 3 point 8 (suggestions, D24 `b2b19c8`) bouclées. La suite = voir **PROCHAINE ACTION CONCRÈTE** (Phase 3 point 9 : couche IA opt-in). _Seul reliquat nutrition : recréation des ~38 boissons (ancien projet perdu) — déféré, déjà listé en « À part / déférés »._
 
 ## Notes / non testé
 - Installation réelle sur iPhone + offline standalone **non testés sur device** (vérifié headless). À valider sur l'iPhone cible (via URL Netlify fixe).
