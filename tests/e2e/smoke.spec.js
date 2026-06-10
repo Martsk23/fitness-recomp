@@ -766,6 +766,42 @@ test('analyse de perf (D23) : import → Synthèse → verdict exo réel + secti
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('suggestions (D24) : recette dans le budget → carte Jour → 1 tap (applyRecipe) → journal + budget réduit', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  // On enregistre une recette via le flux EXISTANT (D19) : poulet 200 g = 240 kcal.
+  await page.getByRole('button', { name: 'Bouffe' }).click()
+  await page.getByLabel('Choisir un ingrédient').selectOption('blanc-poulet-cru')
+  await page.getByLabel('Grammes').fill('200')
+  await page.getByLabel('Ajouter au plat').click()
+  await page.getByRole('button', { name: 'Enregistrer comme recette' }).click()
+  await page.getByLabel('Nom de la recette').fill('Poulet simple')
+  await page.getByRole('button', { name: 'Valider la recette' }).click()
+  await expect(page.getByText('Recette « Poulet simple » enregistrée.')).toBeVisible()
+
+  // Jour : budget plein (2483, 0 mangé) → la carte Suggestions propose la recette.
+  await page.getByRole('button', { name: 'Jour', exact: true }).click()
+  const card = page.getByTestId('suggestions-card')
+  await expect(card).toBeVisible()
+  await expect(card.getByText('Poulet simple')).toBeVisible()
+  await expect(page.getByText('240 mangé')).toHaveCount(0) // rien mangé encore
+
+  // 1 tap « Manger » = applyRecipe (flux D19) → append au journal → le Jour se recharge.
+  await page.getByRole('button', { name: 'Suggérer Poulet simple' }).click()
+  await expect(page.getByText('240 mangé')).toBeVisible() // budget réduit, re-tri
+
+  // Persistance réelle : reload → l'entrée rappelée survit (consommé toujours allumé).
+  await page.reload()
+  await expect(page.getByText('240 mangé')).toBeVisible()
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('une pesée saisie est persistée et relue après reload', async ({ page }) => {
   await page.goto('/')
   await completeOnboarding(page)

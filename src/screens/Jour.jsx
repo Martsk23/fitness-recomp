@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot, Flame, Dumbbell, Activity, AlertTriangle } from 'lucide-react'
+import { Sun, TrendingDown, TrendingUp, Minus, Plus, Scale, Droplet, Pill, Check, CircleDot, Flame, Dumbbell, Activity, AlertTriangle, UtensilsCrossed, Sparkles } from 'lucide-react'
 import { db, SETTINGS_KEY } from '../db.js'
 import { C, num, todayKey } from '../ui.js'
 import { trend, shouldWeighNow } from '../lib/weight.js'
@@ -8,6 +8,8 @@ import { loadExpenditure, setExpenditure, clearExpenditure, energyBalance } from
 import { loadIntake, setIntake, clearIntake, effectiveConsumed } from '../lib/intake.js'
 import { loadTraining, setTraining, loadDayWorkouts, effectiveTrained } from '../lib/training.js'
 import { glycemicShares, evaluateGlycemicAlerts } from '../lib/glycemic.js'
+import { loadRecipes, loadIngredients, applyRecipe } from '../lib/nutrition.js'
+import { suggestMeals, proteinDeficitYesterday } from '../lib/suggest.js'
 
 const fmtKg = (kg) => kg.toFixed(1).replace('.', ',')
 
@@ -28,6 +30,9 @@ export default function Jour() {
   const [dayWorkouts, setDayWorkouts] = useState([])
   // Composition glucidique du journal du jour (dérivée, jamais stockée).
   const [glyc, setGlyc] = useState(null)
+  // Re-chargement après une action qui modifie le journal (ex. rappel d'une
+  // suggestion D24) → tout se recalcule (consommé, macros, restants, carte).
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     let alive = true
@@ -65,7 +70,7 @@ export default function Jour() {
     return () => {
       alive = false
     }
-  }, [])
+  }, [refreshKey])
 
   if (!settings || manualIntake === undefined || trained === undefined) return null
 
@@ -103,6 +108,16 @@ export default function Jour() {
   const alerts = glycActive
     ? evaluateGlycemicAlerts({ sugars: consumed.s, sugarsTarget: settings.targetSugarsSimple, shares: glyc, trained: trainedEffective })
     : []
+
+  // Restants du jour pour les suggestions (D24). En mode dégradé D20 (total manuel,
+  // 0 entrée) le détail macros est inconnu → null (le moteur score alors kcal-only).
+  const remainingBudget = {
+    kcal: targetKcal - consumedKcal,
+    protein: consumedFromManual ? null : settings.targetProtein - consumed.p,
+    carb: consumedFromManual ? null : settings.targetCarb - consumed.c,
+    fat: consumedFromManual ? null : settings.targetFat - consumed.f,
+    sugars: consumedFromManual ? null : settings.targetSugarsSimple - consumed.s,
+  }
 
   async function clearManualIntake() {
     await clearIntake()
@@ -208,6 +223,17 @@ export default function Jour() {
           Recomp · sucres simples &lt; {settings.targetSugarsSimple} g/jour
         </div>
       </div>
+
+      {/* Suggestions de repas (D24) : dérivées des recettes (D19) + restants du jour.
+          Sous le bloc restant (« voilà ton restant → voilà quoi manger »). 1 tap =
+          applyRecipe (flux D19) → refreshKey recharge tout, la carte se re-trie. */}
+      <SuggestionsCard
+        remaining={remainingBudget}
+        trained={trainedEffective}
+        kcalOnly={consumedFromManual}
+        targetProtein={settings.targetProtein}
+        onLogged={() => setRefreshKey((k) => k + 1)}
+      />
 
       {/* Séance du jour (D21) : saisie explicite 1-tap. Absence = repos. Sert la
           règle d'alerte B (haut-IG un jour de repos). Toujours visible (utile même
@@ -786,6 +812,173 @@ function GlyLegend({ color, label, pct, testid }) {
         {Math.round(pct)}%
       </span>
     </span>
+  )
+}
+
+// ── Suggestions de repas (D24) ─────────────────────────────────────
+// Carte dérivée des recettes (D19) selon les restants du jour. Le moteur PUR
+// `suggestMeals` décide l'état (mode) ET le contenu ; ici on charge la base
+// (recettes, biblio, protéines de la VEILLE) et on rend. 1 tap = applyRecipe
+// (flux D19 réutilisé) → onLogged() recharge le Jour → la carte se re-trie.
+const CHIP_LABELS = { proteine: 'Protéiné', leger: 'Léger', 'post-seance': 'Post-séance' }
+
+function SuggestionsCard({ remaining, trained, kcalOnly, targetProtein, onLogged }) {
+  const [data, setData] = useState(null)
+  const [activeChip, setActiveChip] = useState(null)
+  const [busyId, setBusyId] = useState(null)
+  const [warning, setWarning] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const [recipes, ingredients] = await Promise.all([loadRecipes(), loadIngredients()])
+      // Protéines de la veille : null si AUCUN journal détaillé hier (mode manuel /
+      // 0 entrée) → proteinDeficitYesterday renvoie false (pas de boost, jamais NaN).
+      const yKey = todayKey(new Date(Date.now() - 86_400_000))
+      const yEntries = await db.journalEntries.where('date').equals(yKey).toArray()
+      const yProtein = yEntries.length ? yEntries.reduce((a, e) => a + (e.protein || 0), 0) : null
+      if (!alive) return
+      setData({
+        recipes,
+        ingredients,
+        ingredientsById: new Map(ingredients.map((i) => [i.id, i])),
+        proteinDeficit: proteinDeficitYesterday(yProtein, targetProtein),
+      })
+    })()
+    return () => {
+      alive = false
+    }
+  }, [targetProtein])
+
+  if (!data) return null
+
+  const view = suggestMeals({
+    recipes: data.recipes,
+    ingredientsById: data.ingredientsById,
+    ingredients: data.ingredients,
+    remaining,
+    trained,
+    kcalOnly,
+    hour: new Date().getHours(),
+    proteinDeficit: data.proteinDeficit,
+  })
+
+  if (view.mode === 'hidden') return null
+
+  async function pick(recipe) {
+    setBusyId(recipe.id)
+    setWarning(null)
+    const { added, missing } = await applyRecipe(recipe.id)
+    setBusyId(null)
+    if (missing.length) setWarning(`Ignoré (supprimé) : ${missing.join(', ')}`)
+    if (added > 0) onLogged() // le Jour recharge → budget réduit → re-tri
+  }
+
+  // Chips disponibles = union des tags des suggestions ; filtre client.
+  const allTags = [...new Set(view.suggestions.flatMap((s) => s.tags))]
+  const shown = activeChip ? view.suggestions.filter((s) => s.tags.includes(activeChip)) : view.suggestions
+
+  return (
+    <div data-testid="suggestions-card" className="mt-4 rounded-2xl p-3.5 border" style={{ background: C.surface, borderColor: C.line }}>
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: C.faint }}>
+          Suggestions
+        </span>
+        <Sparkles size={14} style={{ color: C.energy }} />
+      </div>
+
+      {view.mode === 'no-recipes' && (
+        <div className="text-[12.5px] leading-relaxed" style={{ color: C.muted }}>
+          Enregistre tes plats récurrents comme recettes (onglet Bouffe) pour recevoir des suggestions dans ton budget.
+        </div>
+      )}
+
+      {view.mode === 'gate' && (
+        <div data-testid="suggestions-gate" className="flex items-start gap-1.5 text-[12.5px] leading-snug" style={{ color: C.warn }}>
+          <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {view.reason}
+        </div>
+      )}
+
+      {view.suggestions.length > 0 && (
+        <>
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {allTags.map((t) => {
+                const on = activeChip === t
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setActiveChip(on ? null : t)}
+                    aria-pressed={on}
+                    className="px-2.5 py-1 rounded-full text-[11.5px] font-semibold border active:scale-95 transition"
+                    style={{
+                      background: on ? C.energy : 'transparent',
+                      borderColor: on ? C.energy : C.line,
+                      color: on ? C.bg : C.muted,
+                    }}
+                  >
+                    {CHIP_LABELS[t] || t}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {shown.map((s) => (
+              <div key={s.recipe.id} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5" style={{ background: C.surfaceHi }}>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium truncate" style={{ color: C.text }}>
+                    {s.recipe.name}
+                  </div>
+                  <div className="text-[11.5px] mt-0.5" style={{ color: C.muted, ...num }}>
+                    {s.totals.kcal} kcal · P {Math.round(s.totals.protein)} / G {Math.round(s.totals.carb)} / L {Math.round(s.totals.fat)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => pick(s.recipe)}
+                  disabled={busyId === s.recipe.id}
+                  aria-label={`Suggérer ${s.recipe.name}`}
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-semibold active:scale-95 transition disabled:opacity-40"
+                  style={{ background: C.energy, color: C.bg }}
+                >
+                  Manger
+                </button>
+              </div>
+            ))}
+            {shown.length === 0 && (
+              <div className="text-[12px]" style={{ color: C.faint }}>
+                Aucune suggestion pour ce filtre.
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Complément mono-ingrédient (chemin gate / sous-seuil) — étiqueté COMPLÉMENT,
+          jamais « repas ». Couvre le restant protéique calculé depuis la biblio. */}
+      {view.filler && (
+        <div
+          data-testid="suggestions-filler"
+          className="mt-2.5 flex items-start gap-2 rounded-xl px-3 py-2.5 text-[12.5px] leading-snug"
+          style={{ background: 'rgba(56,189,248,0.06)', border: `1px solid rgba(56,189,248,0.25)`, color: C.protein }}
+        >
+          <UtensilsCrossed size={14} className="shrink-0 mt-0.5" />
+          <span>
+            <span className="font-semibold">Complément</span> — {view.filler.grams} g de {view.filler.ing.name} ≈{' '}
+            {Math.round(view.filler.protein)} g de protéines restantes ({view.filler.kcal} kcal).
+          </span>
+        </div>
+      )}
+
+      {warning && (
+        <div className="mt-2 text-[11.5px]" style={{ color: C.warn }}>
+          {warning}
+        </div>
+      )}
+    </div>
   )
 }
 
