@@ -13,6 +13,7 @@ import {
   lineMacros,
   composeTotals,
   distinctCategories,
+  filterIngredients,
   loadRecipes,
   saveRecipe,
   renameRecipe,
@@ -103,14 +104,21 @@ function SubTab({ id, label, view, set }) {
 // ── (b) Composer un plat par pesée ─────────────────────────────────
 function Composer({ ingredients, onSaved, onRecipeSaved }) {
   const [pickId, setPickId] = useState('')
+  const [pickQuery, setPickQuery] = useState('') // filtre texte au-dessus du picker
   const [gramsStr, setGramsStr] = useState('')
   const [lines, setLines] = useState([]) // [{ ing, grams }]
   const [recipeName, setRecipeName] = useState(null) // null = formulaire fermé
   const [recipeNote, setRecipeNote] = useState('')
-  const cats = useMemo(() => distinctCategories(ingredients), [ingredients])
+  // Filtre vide ⇒ liste complète (les 58) → le <select> reste identique à avant.
+  const shown = useMemo(() => filterIngredients(ingredients, { q: pickQuery }), [ingredients, pickQuery])
+  const cats = useMemo(() => distinctCategories(shown), [shown])
+  // Sélection EFFECTIVE : si l'ingrédient choisi sort du set filtré, on retombe sur
+  // « rien » (évite une <option> orpheline pointée par la valeur du select). Dérivé,
+  // pas de state miroir : le filtre ne peut pas laisser une sélection fantôme.
+  const effectivePick = shown.some((i) => i.id === pickId) ? pickId : ''
 
   function addLine() {
-    const ing = ingredients.find((i) => i.id === pickId)
+    const ing = ingredients.find((i) => i.id === effectivePick)
     const grams = parseNum(gramsStr)
     if (!ing || !Number.isFinite(grams) || grams <= 0) return
     setLines((l) => [...l, { ing, grams }])
@@ -148,17 +156,31 @@ function Composer({ ingredients, onSaved, onRecipeSaved }) {
         <span className="block text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: C.faint }}>
           Ajouter un ingrédient
         </span>
+        {/* Filtre texte : restreint les options du <select> natif sans le remplacer
+            (on garde le picker déroulant). Vide ⇒ les 58 ingrédients. */}
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2 border mb-2" style={{ background: C.bg, borderColor: C.line }}>
+          <Search size={15} style={{ color: C.faint }} />
+          <input
+            type="text"
+            aria-label="Filtrer les ingrédients"
+            placeholder="Filtrer…"
+            value={pickQuery}
+            onChange={(e) => setPickQuery(e.target.value)}
+            className="flex-1 bg-transparent outline-none text-[14px]"
+            style={{ color: C.text }}
+          />
+        </div>
         <select
           aria-label="Choisir un ingrédient"
-          value={pickId}
+          value={effectivePick}
           onChange={(e) => setPickId(e.target.value)}
           className="w-full rounded-xl px-3 py-2 text-[14px] outline-none border mb-2"
-          style={{ background: C.bg, borderColor: C.line, color: pickId ? C.text : C.faint }}
+          style={{ background: C.bg, borderColor: C.line, color: effectivePick ? C.text : C.faint }}
         >
           <option value="">— choisir —</option>
           {cats.map((cat) => (
             <optgroup key={cat} label={cat}>
-              {ingredients
+              {shown
                 .filter((i) => i.category === cat)
                 .map((i) => (
                   <option key={i.id} value={i.id}>
@@ -437,10 +459,8 @@ function Library({ ingredients, onChange }) {
 
   const cats = useMemo(() => distinctCategories(ingredients), [ingredients])
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return ingredients.filter(
-      (i) => (cat === 'all' || i.category === cat) && (!needle || i.name.toLowerCase().includes(needle)),
-    )
+    const byCat = cat === 'all' ? ingredients : ingredients.filter((i) => i.category === cat)
+    return filterIngredients(byCat, { q }) // même prédicat de nom que le Composer
   }, [ingredients, q, cat])
 
   return (

@@ -90,6 +90,17 @@ export function validateIngredient(data) {
   return { ok: true }
 }
 
+/**
+ * Filtre par nom (sous-chaîne, insensible à la casse). PRÉDICAT UNIQUE de filtre
+ * partagé par la Bibliothèque ET le picker du Composer (source unique). q vide ⇒
+ * liste renvoyée inchangée (les appelants gardent ainsi leur liste complète).
+ */
+export function filterIngredients(ingredients, { q = '' } = {}) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return ingredients
+  return ingredients.filter((i) => i.name.toLowerCase().includes(needle))
+}
+
 /** Catégories distinctes présentes, connues d'abord (ordre stable) puis le reste en alpha. */
 export function distinctCategories(ingredients) {
   const present = new Set(ingredients.map((i) => i.category))

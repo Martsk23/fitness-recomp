@@ -313,6 +313,34 @@ test('nutrition : seed parti via flag, plat pesé → kcal/macros corrects → r
   expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
 })
 
+test('composer : filtrer le picker en tapant → option restreinte → sélection → ajout au plat', async ({ page }) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  page.on('pageerror', (e) => errors.push(String(e)))
+
+  await page.goto('/')
+  await completeOnboarding(page)
+
+  await page.getByRole('button', { name: 'Bouffe' }).click() // vue Composer par défaut
+  const select = page.getByLabel('Choisir un ingrédient')
+
+  // Filtre vide : le picker contient le riz (preuve que la liste est complète).
+  await expect(select.locator('option', { hasText: 'Riz blanc (cuit)' })).toHaveCount(1)
+
+  // On TAPE « poul » → le picker se restreint : le poulet reste, le riz disparaît.
+  await page.getByLabel('Filtrer les ingrédients').fill('poul')
+  await expect(select.locator('option', { hasText: 'Blanc de poulet (cru)' })).toHaveCount(1)
+  await expect(select.locator('option', { hasText: 'Riz blanc (cuit)' })).toHaveCount(0)
+
+  // Sélection dans la liste filtrée → grammes → ajout au plat → total 240 kcal.
+  await select.selectOption('blanc-poulet-cru')
+  await page.getByLabel('Grammes').fill('200')
+  await page.getByLabel('Ajouter au plat').click()
+  await expect(page.getByTestId('meal-total-kcal')).toHaveText('240')
+
+  expect(errors, `erreurs console:\n${errors.join('\n')}`).toHaveLength(0)
+})
+
 test('nutrition bibliothèque : créer un ingrédient → visible → éditer → supprimer (rendu réel)', async ({ page }) => {
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))

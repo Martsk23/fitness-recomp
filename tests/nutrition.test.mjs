@@ -14,6 +14,7 @@ import {
   regramMacros,
   validateIngredient,
   distinctCategories,
+  filterIngredients,
   saveMeal,
   loadDayEntries,
   updateEntryGrams,
@@ -80,6 +81,19 @@ function c_categories() {
   ])
   ok(cats[0] === 'féculents' && cats.indexOf('fruits') < cats.indexOf('aromates'), 'connues dans l\'ordre stable (féculents avant fruits avant aromates)')
   ok(cats[cats.length - 1] === 'zzz-custom', 'catégorie inconnue (custom) rejetée en fin')
+}
+
+// ── F — filtre par nom (prédicat partagé Composer + Bibliothèque) ──
+function f_filter() {
+  console.log('\n— F : filterIngredients —')
+  const list = [RICE, CHICKEN, { id: 'riz2', name: 'Riz complet', category: 'féculents' }]
+  ok(filterIngredients(list, { q: '' }).length === 3, 'q vide → liste inchangée (les 3)')
+  ok(filterIngredients(list, {}).length === 3, 'q absent → liste inchangée (défaut)')
+  const r = filterIngredients(list, { q: 'riz' })
+  ok(r.length === 2 && r.every((i) => i.name.toLowerCase().includes('riz')), 'q="riz" → les 2 riz (sous-chaîne)')
+  ok(filterIngredients(list, { q: 'POU' }).length === 1, 'casse ignorée : "POU" → Poulet')
+  ok(filterIngredients(list, { q: '  com ' }).length === 1, 'trim + sous-chaîne : " com " → Riz complet')
+  ok(filterIngredients(list, { q: 'zzz' }).length === 0, 'aucun match → liste vide (jamais throw)')
 }
 
 // ── S — composition → journalEntries (snapshot D1) ─────────────────
@@ -180,6 +194,7 @@ async function run() {
   m_pure()
   v_validate()
   c_categories()
+  f_filter()
   await s_saveMeal()
   await l_seedLibrary()
   await wipeAll()
